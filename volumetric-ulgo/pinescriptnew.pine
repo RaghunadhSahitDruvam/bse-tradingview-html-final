@@ -1,0 +1,300 @@
+
+//@version=5
+indicator('ONLY-VOLUMETRIC-ULGO', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 1500,max_bars_back = 4900,precision = 2,format = format.price)
+swingLength__price_action = input.int(8, title = 'Swing Length', group = 'Price Action Volumetric Order Blocks [UAlgo] Settings')
+showLastXOb__price_action = input.int(4, title = 'Show Last X Order Blocks', minval = 1, maxval = 10, group = 'Price Action Volumetric Order Blocks [UAlgo] Settings')
+violationType__price_action = input.string('Wick', title = 'Violation Check', options = ['Wick', 'Close'], group = 'Price Action Volumetric Order Blocks [UAlgo] Settings')
+hideOverlap__price_action = input.string('True', title = 'Hide Overlap', options = ['True', 'False'], group = 'Price Action Volumetric Order Blocks [UAlgo] Settings')
+upObColor__price_action = input.color(color.new(color.teal, 40), title = 'Colors', group = 'Price Action Volumetric Order Blocks [UAlgo] Settings', inline = 'vs')
+downObColor__price_action = input.color(color.new(color.red, 40), title = ' ', group = 'Price Action Volumetric Order Blocks [UAlgo] Settings', inline = 'vs')
+
+type swing__price_action
+	float y__price_action = na
+	int x__price_action = na
+	bool crossed__price_action = false
+
+type ob__price_action
+	float top__price_action = na
+	float btm__price_action = na
+	int barStart__price_action
+	float bullishStr__price_action
+	float bearishStr__price_action
+	box obBox__price_action
+	box bullishBox__price_action
+	box bearishBox__price_action
+	float vol__price_action
+	bool broken__price_action
+	line seperatorLine__price_action
+	line orderTextSeperator__price_action
+
+type market__price_action
+	string msbOrBos__price_action
+	int direction__price_action
+	line marketLine__price_action
+	int lastLineTime__price_action
+	label marketLabel__price_action
+
+var array<ob__price_action> bullishOb__price_action = array.new<ob__price_action>()
+var array<ob__price_action> bearishOb__price_action = array.new<ob__price_action>()
+var market__price_action marketStructure__price_action = market__price_action.new(na, na, na, 0)
+
+var float top__price_action = na
+var float btm__price_action = na
+top__price_action := ta.pivothigh(swingLength__price_action, swingLength__price_action)
+btm__price_action := ta.pivotlow(swingLength__price_action, swingLength__price_action)
+
+// Declare a variable to store the ending time of the last invalidated green box.
+var int latestGreenBoxEndTime__price_action = na
+
+var swing__price_action topp__price_action = swing__price_action.new()
+var swing__price_action btmm__price_action = swing__price_action.new()
+if not na(top__price_action)
+    topp__price_action.x__price_action := time[swingLength__price_action]
+    topp__price_action.y__price_action := high[swingLength__price_action]
+    topp__price_action.crossed__price_action := false
+    topp__price_action.crossed__price_action
+
+if not na(btm__price_action)
+    btmm__price_action.x__price_action := time[swingLength__price_action]
+    btmm__price_action.y__price_action := low[swingLength__price_action]
+    btmm__price_action.crossed__price_action := false
+    btmm__price_action.crossed__price_action
+
+calculateStrengths__price_action(barIndex__price_action) =>
+    float bullishStrength__price_action = 0.0
+    float bearishStrength__price_action = 0.0
+    int barsToConsider__price_action = swingLength__price_action
+
+    for i__price_action = 0 to barsToConsider__price_action - 1 by 1
+        if barIndex__price_action - i__price_action >= 0
+            float openn__price_action = open[barIndex__price_action - i__price_action]
+            float highh__price_action = high[barIndex__price_action - i__price_action]
+            float loww__price_action = low[barIndex__price_action - i__price_action]
+            float closee__price_action = close[barIndex__price_action - i__price_action]
+            float volumee__price_action = volume[barIndex__price_action - i__price_action]
+
+            if openn__price_action > closee__price_action
+                bearishStrength__price_action := bearishStrength__price_action + volumee__price_action
+            else
+                bullishStrength__price_action := bullishStrength__price_action + volumee__price_action
+
+    [bullishStrength__price_action, bearishStrength__price_action]
+
+isOverlapping__price_action(newBlock__price_action, existingArray__price_action) =>
+    bool flag__price_action = false
+    if array.size(existingArray__price_action) > 0
+        for i__price_action = 0 to array.size(existingArray__price_action) - 1 by 1
+            existingBlock__price_action = array.get(existingArray__price_action, i__price_action)
+            if newBlock__price_action.top__price_action >= existingBlock__price_action.btm__price_action and newBlock__price_action.top__price_action <= existingBlock__price_action.top__price_action or newBlock__price_action.btm__price_action >= existingBlock__price_action.btm__price_action and newBlock__price_action.btm__price_action <= existingBlock__price_action.top__price_action
+                flag__price_action := true
+                flag__price_action
+    flag__price_action
+
+drawBox__price_action(volatilityBlock__price_action) =>
+    volatilityBlock__price_action.bullishBox__price_action := box.new(left = volatilityBlock__price_action.barStart__price_action, right = time, top = volatilityBlock__price_action.top__price_action, bottom = volatilityBlock__price_action.btm__price_action + (volatilityBlock__price_action.top__price_action - volatilityBlock__price_action.btm__price_action) / 2, bgcolor = upObColor__price_action, border_color = na, xloc = xloc.bar_time)
+    volatilityBlock__price_action.bearishBox__price_action := box.new(left = volatilityBlock__price_action.barStart__price_action, right = time, top = volatilityBlock__price_action.btm__price_action + (volatilityBlock__price_action.top__price_action - volatilityBlock__price_action.btm__price_action) / 2, bottom = volatilityBlock__price_action.btm__price_action, bgcolor = downObColor__price_action, border_color = na, xloc = xloc.bar_time)
+    volatilityBlock__price_action.obBox__price_action := box.new(left = volatilityBlock__price_action.barStart__price_action, right = time, top = volatilityBlock__price_action.top__price_action, bottom = volatilityBlock__price_action.btm__price_action, bgcolor = color.new(color.gray, 80), border_color = na, xloc = xloc.bar_time)
+    volatilityBlock__price_action.seperatorLine__price_action := line.new(x1 = volatilityBlock__price_action.barStart__price_action, y1 = volatilityBlock__price_action.btm__price_action + (volatilityBlock__price_action.top__price_action - volatilityBlock__price_action.btm__price_action) / 2, x2 = time, y2 = volatilityBlock__price_action.btm__price_action + (volatilityBlock__price_action.top__price_action - volatilityBlock__price_action.btm__price_action) / 2, color = color.new(color.gray, 50), width = 1, xloc = xloc.bar_time, style = line.style_dashed)
+    volatilityBlock__price_action.orderTextSeperator__price_action := line.new(x1 = volatilityBlock__price_action.barStart__price_action, y1 = volatilityBlock__price_action.top__price_action, x2 = volatilityBlock__price_action.barStart__price_action, y2 = volatilityBlock__price_action.btm__price_action, color = color.new(color.gray, 50), xloc = xloc.bar_time, style = line.style_solid)
+
+if close < btmm__price_action.y__price_action and btmm__price_action.crossed__price_action == false
+    btmm__price_action.crossed__price_action := true
+    marketStructure__price_action.msbOrBos__price_action := na(marketStructure__price_action.msbOrBos__price_action) ? 'msb' : marketStructure__price_action.direction__price_action == -1 ? 'bos' : 'msb'
+    marketStructure__price_action.direction__price_action := -1
+    lineColor__price_action = color.red
+    marketStructure__price_action.marketLine__price_action := line.new(x1 = btmm__price_action.x__price_action, y1 = btmm__price_action.y__price_action, x2 = time, y2 = btmm__price_action.y__price_action, xloc = xloc.bar_time, color = lineColor__price_action)
+    marketStructure__price_action.lastLineTime__price_action := btmm__price_action.x__price_action
+    labelText__price_action = marketStructure__price_action.msbOrBos__price_action == 'msb' ? 'MSB' : 'BOS'
+    labelX__price_action = math.round(math.avg(btmm__price_action.x__price_action, time))
+    marketStructure__price_action.marketLabel__price_action := label.new(x = labelX__price_action, y = btmm__price_action.y__price_action, text = labelText__price_action, color = color.new(color.white, 100), textcolor = lineColor__price_action, style = label.style_label_up, xloc = xloc.bar_time, size = size.tiny)
+
+    float highAndGreenTop__price_action = 0
+    float highAndGreenBtm__price_action = 0
+    int highAndGreenTime__price_action = 0
+    int selectedIndex__price_action = 0
+    float vol__price_action = na
+    for i__price_action = 1 to swingLength__price_action by 1
+        if close[i__price_action] > open[i__price_action] and high[i__price_action] > highAndGreenTop__price_action
+            highAndGreenTop__price_action := high[i__price_action]
+            highAndGreenBtm__price_action := low[i__price_action]
+            highAndGreenTime__price_action := time[i__price_action]
+            vol__price_action := volume[i__price_action]
+            selectedIndex__price_action := i__price_action
+
+    [bullishStrength__price_action, bearishStrength__price_action] = calculateStrengths__price_action(selectedIndex__price_action)
+
+    newOb__price_action = ob__price_action.new(highAndGreenTop__price_action, highAndGreenBtm__price_action, highAndGreenTime__price_action)
+    newOb__price_action.bullishStr__price_action := bullishStrength__price_action
+    newOb__price_action.bearishStr__price_action := bearishStrength__price_action
+    newOb__price_action.vol__price_action := vol__price_action
+    newOb__price_action.broken__price_action := false
+
+    if not isOverlapping__price_action(newOb__price_action, bearishOb__price_action) and hideOverlap__price_action == 'True'
+        array.push(bearishOb__price_action, newOb__price_action)
+        drawBox__price_action(newOb__price_action)
+    if hideOverlap__price_action == 'False'
+        array.push(bearishOb__price_action, newOb__price_action)
+        drawBox__price_action(newOb__price_action)
+
+    if array.size(bearishOb__price_action) > showLastXOb__price_action
+        oldOb__price_action = array.shift(bearishOb__price_action)
+        box.delete(oldOb__price_action.bullishBox__price_action)
+        box.delete(oldOb__price_action.bearishBox__price_action)
+        box.delete(oldOb__price_action.obBox__price_action)
+        line.delete(oldOb__price_action.seperatorLine__price_action)
+        line.delete(oldOb__price_action.orderTextSeperator__price_action)
+
+else if close > topp__price_action.y__price_action and topp__price_action.crossed__price_action == false
+    topp__price_action.crossed__price_action := true
+    marketStructure__price_action.msbOrBos__price_action := na(marketStructure__price_action.msbOrBos__price_action) ? 'msb' : marketStructure__price_action.direction__price_action == 1 ? 'bos' : 'msb'
+    marketStructure__price_action.direction__price_action := 1
+    lineColor__price_action = color.green
+    marketStructure__price_action.marketLine__price_action := line.new(x1 = topp__price_action.x__price_action, y1 = topp__price_action.y__price_action, x2 = time, y2 = topp__price_action.y__price_action, xloc = xloc.bar_time, color = lineColor__price_action)
+    marketStructure__price_action.lastLineTime__price_action := topp__price_action.x__price_action
+    labelText__price_action = marketStructure__price_action.msbOrBos__price_action == 'msb' ? 'MSB' : 'BOS'
+    labelX__price_action = math.round(math.avg(topp__price_action.x__price_action, time))
+    marketStructure__price_action.marketLabel__price_action := label.new(x = labelX__price_action, y = topp__price_action.y__price_action, text = labelText__price_action, color = color.new(color.white, 100), textcolor = lineColor__price_action, style = label.style_label_down, xloc = xloc.bar_time, size = size.tiny)
+
+    float lowAndRedBtm__price_action = 999999999999
+    float lowAndRedTop__price_action = na
+    int lowAndRedTime__price_action = 0
+    int selectedIndex__price_action = 0
+    float vol__price_action = na
+    for i__price_action = 1 to swingLength__price_action by 1
+        if close[i__price_action] < open[i__price_action] and low[i__price_action] < lowAndRedBtm__price_action
+            lowAndRedBtm__price_action := low[i__price_action]
+            lowAndRedTop__price_action := high[i__price_action]
+            lowAndRedTime__price_action := time[i__price_action]
+            vol__price_action := volume[i__price_action]
+            selectedIndex__price_action := i__price_action
+
+    [bullishStrength__price_action, bearishStrength__price_action] = calculateStrengths__price_action(selectedIndex__price_action)
+
+    newOb__price_action = ob__price_action.new(lowAndRedTop__price_action, lowAndRedBtm__price_action, lowAndRedTime__price_action)
+    newOb__price_action.bullishStr__price_action := bullishStrength__price_action
+    newOb__price_action.bearishStr__price_action := bearishStrength__price_action
+    newOb__price_action.vol__price_action := vol__price_action
+    newOb__price_action.broken__price_action := false
+
+    if not isOverlapping__price_action(newOb__price_action, bullishOb__price_action) and hideOverlap__price_action == 'True'
+        array.push(bullishOb__price_action, newOb__price_action)
+        drawBox__price_action(newOb__price_action)
+    if hideOverlap__price_action == 'False'
+        array.push(bullishOb__price_action, newOb__price_action)
+        drawBox__price_action(newOb__price_action)
+
+    if array.size(bullishOb__price_action) > showLastXOb__price_action
+        oldOb__price_action = array.shift(bullishOb__price_action)
+        box.delete(oldOb__price_action.bullishBox__price_action)
+        box.delete(oldOb__price_action.bearishBox__price_action)
+        box.delete(oldOb__price_action.obBox__price_action)
+        line.delete(oldOb__price_action.seperatorLine__price_action)
+        line.delete(oldOb__price_action.orderTextSeperator__price_action)
+
+if array.size(bullishOb__price_action) > 0
+    for i__price_action = 0 to array.size(bullishOb__price_action) - 1 by 1
+        currentOb__price_action = array.get(bullishOb__price_action, i__price_action)
+        if currentOb__price_action.obBox__price_action.get_left() != na and currentOb__price_action.obBox__price_action.get_right() != na
+            totalStr__price_action = currentOb__price_action.bullishStr__price_action + currentOb__price_action.bearishStr__price_action
+            bullishBoxWidth__price_action = currentOb__price_action.bullishStr__price_action / totalStr__price_action * ((currentOb__price_action.obBox__price_action.get_left() + time) / 2 - currentOb__price_action.barStart__price_action)
+            bearishBoxWidth__price_action = currentOb__price_action.bearishStr__price_action / totalStr__price_action * ((currentOb__price_action.obBox__price_action.get_left() + time) / 2 - currentOb__price_action.barStart__price_action)
+            currentOb__price_action.bullishBox__price_action.set_right(math.round(currentOb__price_action.barStart__price_action + bullishBoxWidth__price_action))
+            currentOb__price_action.bearishBox__price_action.set_right(math.round(currentOb__price_action.barStart__price_action + bearishBoxWidth__price_action))
+            currentOb__price_action.obBox__price_action.set_right(time)
+            line.set_xy2(currentOb__price_action.seperatorLine__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.btm__price_action + (currentOb__price_action.top__price_action - currentOb__price_action.btm__price_action) / 2)
+
+            line.set_xy1(currentOb__price_action.orderTextSeperator__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.top__price_action)
+            line.set_xy2(currentOb__price_action.orderTextSeperator__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.btm__price_action)
+
+            violation__price_action = violationType__price_action == 'Wick' and low < currentOb__price_action.btm__price_action or violationType__price_action == 'Close' and close < currentOb__price_action.btm__price_action
+
+            if violation__price_action
+                // Capture the timestamp of the current bar because this is when the green box "ends".
+                latestGreenBoxEndTime__price_action := time
+                
+                box.delete(currentOb__price_action.bullishBox__price_action)
+                box.delete(currentOb__price_action.bearishBox__price_action)
+                box.delete(currentOb__price_action.obBox__price_action)
+                line.delete(currentOb__price_action.seperatorLine__price_action)
+                line.delete(currentOb__price_action.orderTextSeperator__price_action)
+                array.remove(bullishOb__price_action, i__price_action)
+                break
+
+if array.size(bearishOb__price_action) > 0
+    for i__price_action = 0 to array.size(bearishOb__price_action) - 1 by 1
+        currentOb__price_action = array.get(bearishOb__price_action, i__price_action)
+        if currentOb__price_action.obBox__price_action.get_left() != na and currentOb__price_action.obBox__price_action.get_right() != na
+            totalStr__price_action = currentOb__price_action.bullishStr__price_action + currentOb__price_action.bearishStr__price_action
+            bullishBoxWidth__price_action = currentOb__price_action.bullishStr__price_action / totalStr__price_action * ((currentOb__price_action.obBox__price_action.get_left() + time) / 2 - currentOb__price_action.barStart__price_action)
+            bearishBoxWidth__price_action = currentOb__price_action.bearishStr__price_action / totalStr__price_action * ((currentOb__price_action.obBox__price_action.get_left() + time) / 2 - currentOb__price_action.barStart__price_action)
+            currentOb__price_action.bullishBox__price_action.set_right(math.round(currentOb__price_action.barStart__price_action + bullishBoxWidth__price_action))
+            currentOb__price_action.bearishBox__price_action.set_right(math.round(currentOb__price_action.barStart__price_action + bearishBoxWidth__price_action))
+            currentOb__price_action.obBox__price_action.set_right(time)
+            line.set_xy2(currentOb__price_action.seperatorLine__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.btm__price_action + (currentOb__price_action.top__price_action - currentOb__price_action.btm__price_action) / 2)
+
+            line.set_xy1(currentOb__price_action.orderTextSeperator__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.top__price_action)
+            line.set_xy2(currentOb__price_action.orderTextSeperator__price_action, (currentOb__price_action.obBox__price_action.get_left() + time) / 2, currentOb__price_action.btm__price_action)
+
+            violation__price_action = violationType__price_action == 'Wick' and high > currentOb__price_action.top__price_action or violationType__price_action == 'Close' and close > currentOb__price_action.top__price_action
+
+            if violation__price_action
+                box.delete(currentOb__price_action.bullishBox__price_action)
+                box.delete(currentOb__price_action.bearishBox__price_action)
+                box.delete(currentOb__price_action.obBox__price_action)
+                line.delete(currentOb__price_action.seperatorLine__price_action)
+                line.delete(currentOb__price_action.orderTextSeperator__price_action)
+                array.remove(bearishOb__price_action, i__price_action)
+                break
+
+// --- START: Code to plot volumetric values in data window ---
+
+// 1. Get the last bullish and bearish OB objects, if they exist.
+lastBullishOb__price_action = array.size(bullishOb__price_action) > 0 ? array.last(bullishOb__price_action) : na
+lastBearishOb__price_action = array.size(bearishOb__price_action) > 0 ? array.last(bearishOb__price_action) : na
+
+// 2. Determine which of the two is the most recent (the overall "last" box) and store its info.
+var int latestBoxStartTime__price_action = na
+var float latestBoxTopPrice__price_action = na
+
+if na(lastBullishOb__price_action) and na(lastBearishOb__price_action)
+    latestBoxStartTime__price_action := na
+    latestBoxTopPrice__price_action := na
+else if na(lastBullishOb__price_action)
+    latestBoxStartTime__price_action := lastBearishOb__price_action.barStart__price_action
+    latestBoxTopPrice__price_action := lastBearishOb__price_action.top__price_action
+else if na(lastBearishOb__price_action)
+    latestBoxStartTime__price_action := lastBullishOb__price_action.barStart__price_action
+    latestBoxTopPrice__price_action := lastBullishOb__price_action.top__price_action
+else
+    if lastBullishOb__price_action.barStart__price_action > lastBearishOb__price_action.barStart__price_action
+        latestBoxStartTime__price_action := lastBullishOb__price_action.barStart__price_action
+        latestBoxTopPrice__price_action := lastBullishOb__price_action.top__price_action
+    else
+        latestBoxStartTime__price_action := lastBearishOb__price_action.barStart__price_action
+        latestBoxTopPrice__price_action := lastBearishOb__price_action.top__price_action
+
+// 3. Format the START time and plot it and the price in the data window.
+var int formattedDate__price_action = na
+if not na(latestBoxStartTime__price_action)
+    y = year(latestBoxStartTime__price_action, syminfo.timezone)
+    m = month(latestBoxStartTime__price_action, syminfo.timezone)
+    d = dayofmonth(latestBoxStartTime__price_action, syminfo.timezone)
+    formattedDate__price_action := y * 10000 + m * 100 + d
+else
+    formattedDate__price_action := na
+
+plot(formattedDate__price_action, title='LVolumetric Ulgo Time (YYYYMMDD)', display=display.data_window)
+plot(latestBoxTopPrice__price_action, title='Volumetric Ulgo Price', display=display.data_window)
+
+// 4. Format the ENDING time of the last broken green box.
+int formattedGreenBoxEndDate__price_action = na
+if not na(latestGreenBoxEndTime__price_action)
+    y_end = year(latestGreenBoxEndTime__price_action, syminfo.timezone)
+    m_end = month(latestGreenBoxEndTime__price_action, syminfo.timezone)
+    d_end = dayofmonth(latestGreenBoxEndTime__price_action, syminfo.timezone)
+    formattedGreenBoxEndDate__price_action := y_end * 10000 + m_end * 100 + d_end
+
+// 5. Plot the formatted ending date in the Data Window.
+plot(formattedGreenBoxEndDate__price_action, title='Ending Time', display=display.data_window)
+
+// --- END: Code to plot volumetric values ---

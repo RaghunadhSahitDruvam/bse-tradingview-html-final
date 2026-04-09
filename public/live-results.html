@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Breakout Stocks</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background-color: #f0f2f5;
+        color: #1c1e21;
+        margin: 0;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+      }
+      .container {
+        width: 100%;
+        max-width: 800px;
+        background-color: #ffffff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+      }
+      h1 {
+        color: #1877f2;
+        border-bottom: 2px solid #e7f3ff;
+        padding-bottom: 10px;
+        margin-top: 0;
+      }
+      #status {
+        font-style: italic;
+        color: #606770;
+        margin-bottom: 20px;
+        padding: 10px;
+        background-color: #e7f3ff;
+        border-radius: 6px;
+      }
+      #stock-list {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+      }
+      .stock-item {
+        padding: 15px;
+        border-bottom: 1px solid #dddfe2;
+        font-size: 1.1em;
+        font-weight: 500;
+      }
+      .stock-item:last-child {
+        border-bottom: none;
+      }
+      .stock-item:nth-child(odd) {
+        background-color: #f7f8fa;
+      }
+      .no-stocks {
+        color: #606770;
+        text-align: center;
+        padding: 40px 20px;
+        font-size: 1.2em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🔴 Live Breakout Stocks</h1>
+      <p id="status">Connecting to server... Waiting for live data.</p>
+      <ul id="stock-list">
+        <!-- Stock names will be dynamically inserted here -->
+      </ul>
+    </div>
+
+    <script>
+      const stockList = document.getElementById("stock-list");
+      const statusElement = document.getElementById("status");
+      let lastStockCount = -1; // Use -1 to ensure the first update always happens
+
+      // This function fetches the data and updates the page
+      async function fetchBreakoutStocks() {
+        try {
+          const response = await fetch("/api/breakouts");
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const stocks = await response.json();
+
+          // Only update the DOM if the data has changed
+          if (stocks.length === lastStockCount) {
+            return; // No change, do nothing
+          }
+
+          lastStockCount = stocks.length;
+          stockList.innerHTML = ""; // Clear the current list
+
+          if (stocks.length > 0) {
+            statusElement.textContent = `Live Scan Active. Found ${
+              stocks.length
+            } breakout stock(s). Last updated: ${new Date().toLocaleTimeString()}`;
+            stocks.forEach((stock) => {
+              const listItem = document.createElement("li");
+              listItem.className = "stock-item";
+              // The 'comp_name' is the formatted company name from your tv.js
+              listItem.textContent =
+                stock.comp_name || stock.LONG_NAME || "Unknown Company";
+              stockList.appendChild(listItem);
+            });
+          } else {
+            statusElement.textContent =
+              "Live Scan Active. Waiting for breakout stocks...";
+            const noStocksMessage = document.createElement("div");
+            noStocksMessage.className = "no-stocks";
+            noStocksMessage.textContent =
+              "No breakout stocks found yet. The list will update automatically when a breakout is detected.";
+            stockList.appendChild(noStocksMessage);
+          }
+        } catch (error) {
+          console.error("Error fetching breakout stocks:", error);
+          statusElement.textContent =
+            "Error connecting to the server. Please ensure the scraper is running.";
+          lastStockCount = -1; // Reset to force update on next successful connection
+        }
+      }
+
+      // Fetch data every 3 seconds
+      setInterval(fetchBreakoutStocks, 3000);
+
+      // Fetch data immediately on page load
+      fetchBreakoutStocks();
+    </script>
+  </body>
+</html>
