@@ -10,10 +10,6 @@ const axios = require("axios");
 // Enable stealth mode for puppeteer
 puppeteer.use(StealthPlugin());
 
-// Module-level cache for company name API responses — avoids repeat calls
-// for the same name across different stocks in a single run.
-const nameCache = new Map();
-
 /**
  * Parse a TradingView timestamp string into a Date at local midnight.
  * Handles common formats like:
@@ -173,26 +169,6 @@ const fetch_tv_data = async (
     await page.setCookie(...cookies);
   }
 
-  // Block images, media, fonts, stylesheets and analytics requests to
-  // speed up page load significantly (~60-70% faster per stock).
-  await page.setRequestInterception(true);
-  page.on("request", (req) => {
-    const resourceType = req.resourceType();
-    const url = req.url();
-    if (
-      ["image", "media", "font", "stylesheet"].includes(resourceType) ||
-      url.includes("google-analytics") ||
-      url.includes("doubleclick") ||
-      url.includes("googlesyndication") ||
-      url.includes("amplitude") ||
-      url.includes("segment.io")
-    ) {
-      req.abort();
-    } else {
-      req.continue();
-    }
-  });
-
   try {
     // Navigate to TradingView chart page with enhanced error handling
     try {
@@ -201,6 +177,8 @@ const fetch_tv_data = async (
         `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
         { waitUntil: "domcontentloaded", timeout: 20000 },
       );
+      // Wait a bit for the page to stabilize
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (navigationError) {
       const errorMessage =
         navigationError.message || navigationError.toString();
@@ -240,8 +218,8 @@ const fetch_tv_data = async (
 
     try {
       // Wait for chart elements to load and switch to specified timeframe
-      await page.waitForSelector(canvasSelector, { timeout: 8000 });
-      await page.waitForSelector(timeframeSelector, { timeout: 8000 });
+      await page.waitForSelector(canvasSelector, { timeout: 15000 });
+      await page.waitForSelector(timeframeSelector, { timeout: 15000 });
       await page.click(timeframeSelector);
 
       // Trigger drawing tool shortcut (Alt + D)
@@ -295,7 +273,7 @@ const fetch_tv_data = async (
       const timestampSelector = indicatorSelectors.timeStampSelector;
 
       // Extract trendline value and timestamp
-      await page.waitForSelector(valueSelector, { timeout: 8000 });
+      await page.waitForSelector(valueSelector, { timeout: 15000 });
       const valueText = await page.$eval(valueSelector, (element) =>
         element.textContent.trim(),
       );
@@ -401,24 +379,18 @@ const fetch_tv_data = async (
         .replaceAll(")", "")
         .replaceAll("&", "and");
 
-      if (nameCache.has(formattedName)) {
-        // Cache hit — skip HTTP call entirely
-        companyName = nameCache.get(formattedName);
-      } else {
-        // Fetch with reduced timeout to prevent blocking
-        const response = await Promise.race([
-          axios.get(
-            `https://miniphinzi.vercel.app/api/convert?name=${encodeURIComponent(
-              formattedName,
-            )}`,
-          ),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Timeout")), 1500),
-          ),
-        ]);
-        companyName = response.data;
-        nameCache.set(formattedName, companyName);
-      }
+      // Fetch with timeout to prevent blocking
+      const response = await Promise.race([
+        axios.get(
+          `https://miniphinzi.vercel.app/api/convert?name=${encodeURIComponent(
+            formattedName,
+          )}`,
+        ),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout")), 3000),
+        ),
+      ]);
+      companyName = response.data;
     } catch (err) {
       // Silently fail without console error to reduce noise
       companyName = LONG_NAME.split(" - ")[0]; // Use original name as fallback

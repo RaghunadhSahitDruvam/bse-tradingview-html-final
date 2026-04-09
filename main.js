@@ -56,30 +56,6 @@ const getButtonSelector = (timeframe) => {
 const ALL_TIMEFRAMES = ["15m", "30m", "2h", "1d", "1w", "1m"];
 const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo"];
 
-// Concurrency pool: dispatches ALL tasks at once, but caps simultaneous
-// execution at `limit`. No sequential waiting between batches.
-const createConcurrencyPool = (limit) => {
-  let running = 0;
-  const queue = [];
-  const next = () => {
-    if (running >= limit || queue.length === 0) return;
-    running++;
-    const { fn, resolve, reject } = queue.shift();
-    fn()
-      .then(resolve)
-      .catch(reject)
-      .finally(() => {
-        running--;
-        next();
-      });
-  };
-  return (fn) =>
-    new Promise((resolve, reject) => {
-      queue.push({ fn, resolve, reject });
-      next();
-    });
-};
-
 // Main scraping function
 const main = async (customConfig) => {
   try {
@@ -145,81 +121,87 @@ const main = async (customConfig) => {
     if (targetResponseBody !== null) {
       const stocks = JSON.parse(targetResponseBody).Table;
       console.log(
-        `Found ${stocks.length} stocks. Processing with concurrency limit of ${customConfig.batchSize}...`,
+        `Found ${stocks.length} stocks. Processing in batches of ${customConfig.batchSize}...`,
       );
 
-      const limit = createConcurrencyPool(customConfig.batchSize);
-      processedData = await Promise.all(
-        stocks.map((stock) =>
-          limit(async () => {
-            const { scripname, ltradert, LONG_NAME } = stock;
-            try {
-              const completeConfig = {
-                ...customConfig,
-                canvasSelector: config.canvasSelector,
-                timeframeSelector: getButtonSelector(customConfig.timeframe),
-                indicatorSelectors:
-                  config.indicators[customConfig.indicatorName],
-                baseConfig: config,
-              };
-              const liveBreakout = await fetch_tv_data(
-                browser,
-                scripname,
-                ltradert,
-                LONG_NAME,
-                completeConfig,
-                customConfig.dateSelection || "today",
+      for (let i = 0; i < stocks.length; i += customConfig.batchSize) {
+        const stockBatch = stocks.slice(i, i + customConfig.batchSize);
+        console.log(
+          `Processing batch ${
+            Math.floor(i / customConfig.batchSize) + 1
+          }/${Math.ceil(stocks.length / customConfig.batchSize)}`,
+        );
+
+        const batchPromises = stockBatch.map(async (stock) => {
+          const { scripname, ltradert, LONG_NAME } = stock;
+          try {
+            const completeConfig = {
+              ...customConfig,
+              canvasSelector: config.canvasSelector,
+              timeframeSelector: getButtonSelector(customConfig.timeframe),
+              indicatorSelectors: config.indicators[customConfig.indicatorName],
+              baseConfig: config,
+            };
+            const liveBreakout = await fetch_tv_data(
+              browser,
+              scripname,
+              ltradert,
+              LONG_NAME,
+              completeConfig,
+              customConfig.dateSelection || "today",
+            );
+            const stockResult = { ...stock, ...liveBreakout };
+
+            // In live mode, immediately add breakout stocks to the global array
+            if (isLiveMode && stockResult.isBreakout === true) {
+              // Check if stock is not already in the array (avoid duplicates)
+              const exists = breakoutStocks.some(
+                (s) => s.scripname === stockResult.scripname,
               );
-              const stockResult = { ...stock, ...liveBreakout };
-
-              // In live mode, immediately add breakout stocks to the global array
-              if (isLiveMode && stockResult.isBreakout === true) {
-                // Check if stock is not already in the array (avoid duplicates)
-                const exists = breakoutStocks.some(
-                  (s) => s.scripname === stockResult.scripname,
-                );
-                if (!exists) {
-                  breakoutStocks.push(stockResult);
-                  console.log(
-                    `🔴 LIVE: Added ${scripname} to breakout list (Total: ${breakoutStocks.length})`,
-                  );
-                }
-              }
-
-              return stockResult;
-            } catch (error) {
-              // Enhanced error handling for various Puppeteer errors
-              const errorMessage = error.message || error.toString();
-              if (
-                errorMessage.includes("frame got detached") ||
-                errorMessage.includes("Protocol error") ||
-                errorMessage.includes("Connection closed") ||
-                errorMessage.includes("Target closed") ||
-                errorMessage.includes("Session closed")
-              ) {
+              if (!exists) {
+                breakoutStocks.push(stockResult);
                 console.log(
-                  `⚠️  Skipping ${scripname} due to connection/frame error: ${errorMessage}`,
-                );
-              } else {
-                console.log(
-                  `⚠️  Skipping ${scripname} due to error: ${errorMessage}`,
+                  `🔴 LIVE: Added ${scripname} to breakout list (Total: ${breakoutStocks.length})`,
                 );
               }
-              return {
-                ...stock,
-                isBreakout: false,
-                value: null,
-                comp_name: LONG_NAME,
-                current_market_price: parseFloat(ltradert) || 0,
-                trendline_strength: 0,
-                pivot_point_strength: 0,
-                ema_strength: 0,
-                rs_strength: 0,
-              };
             }
-          }),
-        ),
-      );
+
+            return stockResult;
+          } catch (error) {
+            // Enhanced error handling for various Puppeteer errors
+            const errorMessage = error.message || error.toString();
+            if (
+              errorMessage.includes("frame got detached") ||
+              errorMessage.includes("Protocol error") ||
+              errorMessage.includes("Connection closed") ||
+              errorMessage.includes("Target closed") ||
+              errorMessage.includes("Session closed")
+            ) {
+              console.log(
+                `⚠️  Skipping ${scripname} due to connection/frame error: ${errorMessage}`,
+              );
+            } else {
+              console.log(
+                `⚠️  Skipping ${scripname} due to error: ${errorMessage}`,
+              );
+            }
+            return {
+              ...stock,
+              isBreakout: false,
+              value: null,
+              comp_name: LONG_NAME,
+              current_market_price: parseFloat(ltradert) || 0,
+              trendline_strength: 0,
+              pivot_point_strength: 0,
+              ema_strength: 0,
+              rs_strength: 0,
+            };
+          }
+        });
+
+        const processedBatch = await Promise.all(batchPromises);
+        processedData.push(...processedBatch);
+      }
     } else {
       console.log("Target BSE API request not found.");
     }
