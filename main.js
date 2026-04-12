@@ -56,6 +56,53 @@ const getButtonSelector = (timeframe) => {
 const ALL_TIMEFRAMES = ["15m", "30m", "2h", "1d", "1w", "1m"];
 const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo"];
 
+const formatLocalDate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const isValidYmdDate = (value) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const parsedDate = new Date(`${value}T00:00:00`);
+  return (
+    !Number.isNaN(parsedDate.getTime()) && formatLocalDate(parsedDate) === value
+  );
+};
+
+const resolveRequestedDate = (dateSelection, customDate) => {
+  const today = new Date();
+  const selectedDate = new Date(today);
+
+  if (dateSelection === "custom") {
+    if (!isValidYmdDate(customDate)) {
+      throw new Error("A valid custom date is required in YYYY-MM-DD format.");
+    }
+
+    return {
+      dateSelection: "custom",
+      selectedDate: customDate,
+    };
+  }
+
+  if (dateSelection === "yesterday") {
+    selectedDate.setDate(selectedDate.getDate() - 1);
+    return {
+      dateSelection: "yesterday",
+      selectedDate: formatLocalDate(selectedDate),
+    };
+  }
+
+  return {
+    dateSelection: "today",
+    selectedDate: formatLocalDate(today),
+  };
+};
+
 // Main scraping function
 const main = async (customConfig) => {
   try {
@@ -461,15 +508,19 @@ app.post("/api/run-scraper", async (req, res) => {
       indicator,
       batchSize,
       dateSelection,
+      customDate,
       headless,
       liveMode,
     } = req.body;
+
+    const resolvedDate = resolveRequestedDate(dateSelection, customDate);
 
     // Handle "all" mode - run all indicators and all timeframes
     if (timeframe === "all" || indicator === "all") {
       const baseConfig = {
         batchSize: parseInt(batchSize),
-        dateSelection: dateSelection || "today",
+        dateSelection: resolvedDate.dateSelection,
+        selectedDate: resolvedDate.selectedDate,
         headless: Boolean(headless),
         LIVE_MODE: Boolean(liveMode),
       };
@@ -486,7 +537,8 @@ app.post("/api/run-scraper", async (req, res) => {
       timeframe,
       indicatorName: indicator,
       batchSize: parseInt(batchSize),
-      dateSelection: dateSelection || "today",
+      dateSelection: resolvedDate.dateSelection,
+      selectedDate: resolvedDate.selectedDate,
       headless: Boolean(headless),
       LIVE_MODE: Boolean(liveMode),
     };

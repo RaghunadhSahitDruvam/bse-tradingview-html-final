@@ -66,7 +66,8 @@
       }
 
       select,
-      input[type="number"] {
+      input[type="number"],
+      input[type="date"] {
         width: 100%;
         padding: 12px 16px;
         border: 2px solid #e1e5e9;
@@ -77,7 +78,8 @@
       }
 
       select:focus,
-      input[type="number"]:focus {
+      input[type="number"]:focus,
+      input[type="date"]:focus {
         outline: none;
         border-color: #667eea;
         box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
@@ -211,6 +213,16 @@
         font-weight: 500;
         color: #555;
         cursor: pointer;
+      }
+
+      .custom-date-input {
+        margin: 10px 0 0 35px;
+      }
+
+      .custom-date-input input:disabled {
+        background: #f2f4f7;
+        color: #98a2b3;
+        cursor: not-allowed;
       }
 
       .run-button {
@@ -509,6 +521,23 @@
               >Continue with yesterday's date</label
             >
           </div>
+          <div class="radio-group">
+            <div class="radio-wrapper">
+              <input
+                type="radio"
+                id="customDateOption"
+                name="dateSelection"
+                value="custom"
+              />
+              <span class="radio-mark"></span>
+            </div>
+            <label for="customDateOption" class="radio-label"
+              >Continue with custom date</label
+            >
+          </div>
+          <div class="custom-date-input">
+            <input type="date" id="customDate" name="customDate" disabled />
+          </div>
         </div>
 
         <div class="form-group">
@@ -555,6 +584,38 @@
       let isProcessing = false;
       let liveInterval = null;
 
+      function formatDateLabel(dateValue) {
+        if (!dateValue) return "Custom Date";
+
+        const [year, month, day] = dateValue.split("-");
+        if (!year || !month || !day) return dateValue;
+
+        return `${day}/${month}/${year}`;
+      }
+
+      function getLocalToday() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      }
+
+      function syncCustomDateState() {
+        const selectedDateOption = document.querySelector(
+          'input[name="dateSelection"]:checked',
+        )?.value;
+        const customDateInput = document.getElementById("customDate");
+        const isCustomDate = selectedDateOption === "custom";
+
+        customDateInput.disabled = !isCustomDate;
+        customDateInput.required = isCustomDate;
+
+        if (!isCustomDate) {
+          customDateInput.setCustomValidity("");
+        }
+      }
+
       // Update configuration summary
       function updateConfigSummary() {
         const timeframe = document.getElementById("timeframe").value;
@@ -563,6 +624,7 @@
         const dateSelection = document.querySelector(
           'input[name="dateSelection"]:checked',
         ).value;
+        const customDate = document.getElementById("customDate").value;
         const liveMode = document.getElementById("liveMode").checked;
 
         const timeframeMap = {
@@ -585,6 +647,9 @@
         const dateSelectionMap = {
           today: "Today's Date",
           yesterday: "Yesterday's Date",
+          custom: customDate
+            ? `Custom Date (${formatDateLabel(customDate)})`
+            : "Custom Date",
         };
 
         document.getElementById("summaryTimeframe").textContent =
@@ -611,6 +676,19 @@
           }
           updateConfigSummary();
         });
+
+      document
+        .querySelectorAll('input[name="dateSelection"]')
+        .forEach((input) => {
+          input.addEventListener("change", () => {
+            syncCustomDateState();
+            updateConfigSummary();
+          });
+        });
+
+      document.getElementById("customDate").addEventListener("change", () => {
+        updateConfigSummary();
+      });
 
       // Show status message
       function showStatus(message, type = "success") {
@@ -660,12 +738,19 @@
           });
 
           if (!response.ok) {
-            throw new Error("Failed to start scraper");
+            const errorPayload = await response
+              .json()
+              .catch(() => ({ message: "Failed to start scraper" }));
+            throw new Error(errorPayload.message || "Failed to start scraper");
           }
 
           const result = await response.json();
           return result;
         } catch (error) {
+          if (!(error instanceof TypeError)) {
+            throw error;
+          }
+
           // Simulate different responses based on mode
           return new Promise((resolve) => {
             setTimeout(() => {
@@ -762,11 +847,25 @@
           if (isProcessing) return;
 
           const formData = new FormData(e.target);
+          const customDate = formData.get("customDate");
+          const dateSelection = formData.get("dateSelection");
+
+          if (dateSelection === "custom" && !customDate) {
+            document
+              .getElementById("customDate")
+              .setCustomValidity("Please select a custom date.");
+            document.getElementById("customDate").reportValidity();
+            return;
+          }
+
+          document.getElementById("customDate").setCustomValidity("");
+
           const config = {
             timeframe: formData.get("timeframe"),
             indicator: formData.get("indicator"),
             batchSize: parseInt(formData.get("batchSize")),
-            dateSelection: formData.get("dateSelection"),
+            dateSelection,
+            customDate,
             headless: formData.get("headless") === "on",
             liveMode: formData.get("liveMode") === "on",
           };
@@ -799,10 +898,16 @@
                 }
               }
             } else {
-              showStatus("❌ Error occurred during scraping", "error");
+              showStatus(
+                `❌ ${result.message || "Error occurred during scraping"}`,
+                "error",
+              );
             }
           } catch (error) {
-            showStatus("❌ Failed to start scraper", "error");
+            showStatus(
+              `❌ ${error.message || "Failed to start scraper"}`,
+              "error",
+            );
           } finally {
             isProcessing = false;
             showProcessing(false);
@@ -860,6 +965,8 @@
         .addEventListener("click", stopScraper);
 
       // Initialize
+      document.getElementById("customDate").max = getLocalToday();
+      syncCustomDateState();
       updateConfigSummary();
     </script>
   </body>

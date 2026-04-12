@@ -28,11 +28,22 @@ function parseTvTimestampToLocalMidnight(timestampText) {
   // Strip surrounding quotes if present (handles cases like ""20,260,227.00"")
   const stripped = raw.replace(/^["']|["']$/g, "");
 
-  // Check if the text is a numeric value (with or without commas/decimals)
-  // This handles cases where the selector returns a price or other numeric value instead of a date
+  // TradingView sometimes emits dates as comma-formatted numbers with a decimal, e.g.
+  // "20,260,320.00"  →  20260320  →  YYYYMMDD  →  2026-03-20
+  // Try to detect and parse that before treating the value as a plain price.
   const numericPattern = /^[\d,]+\.?\d*$/;
-  if (numericPattern.test(stripped.replace(/,/g, ""))) {
-    // This is a numeric value, not a date string
+  if (numericPattern.test(stripped)) {
+    // Drop commas and the decimal part to get a bare integer string
+    const digits = stripped.replace(/,/g, "").replace(/\.\d*$/, "");
+    // 8-digit YYYYMMDD
+    const yyyymmdd = digits.match(/^((?:19|20)\d{2})(\d{2})(\d{2})$/);
+    if (yyyymmdd) {
+      const y = Number(yyyymmdd[1]);
+      const m = Number(yyyymmdd[2]);
+      const d = Number(yyyymmdd[3]);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return new Date(y, m - 1, d);
+    }
+    // Not a date — it's a price or other numeric value
     return null;
   }
 
@@ -132,6 +143,19 @@ function ymdToLocalMidnight(ymdStr) {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
+function resolveSelectedDate(dateSelection, selectedDate) {
+  if (ymdToLocalMidnight(selectedDate)) {
+    return selectedDate;
+  }
+
+  const today = new Date();
+  if (dateSelection === "yesterday") {
+    today.setDate(today.getDate() - 1);
+  }
+
+  return toYmdLocal(today);
+}
+
 /**
  * Fetches trading data from TradingView for a given stock
  * @param {Object} browser - Puppeteer browser instance
@@ -160,6 +184,7 @@ const fetch_tv_data = async (
     indicatorSelectors,
     baseConfig,
     LIVE_MODE,
+    selectedDate,
   } = scrapingConfig;
 
   // Load saved cookies if they exist
@@ -284,16 +309,10 @@ const fetch_tv_data = async (
       // Parse timestamp safely (TradingView timestamp formats can vary a lot)
       const indicatorDate = parseTvTimestampToLocalMidnight(timestampText);
 
-      // Determine which date to compare against based on user selection
-      const today = new Date();
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-
-      const currentDateStr = toYmdLocal(today);
-      const yesterdayDateStr = toYmdLocal(yesterday);
-
-      const selectedDate =
-        dateSelection === "yesterday" ? yesterdayDateStr : currentDateStr;
+      const effectiveSelectedDate = resolveSelectedDate(
+        dateSelection,
+        selectedDate,
+      );
 
       // Calculate breakout condition
       value = parseFloat(valueText);
@@ -304,22 +323,22 @@ const fetch_tv_data = async (
           // If timestamp couldn't be parsed, use the selected date as fallback
           // This handles cases where the selector returns numeric data instead of dates
           console.log(
-            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Using selected date: ${selectedDate}`,
+            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Using selected date: ${effectiveSelectedDate}`,
           );
           isBreakout = ltradert > value;
         } else {
           console.log(
             indicatorDateStr,
-            selectedDate,
+            effectiveSelectedDate,
             `(Using ${dateSelection})`,
           );
           isBreakout =
             !!indicatorDate &&
             ltradert > value &&
-            indicatorDateStr === selectedDate;
+            indicatorDateStr === effectiveSelectedDate;
         }
       } else if (indicatorName === "Volumetric-Ulgo") {
-        const selectedDateObj = ymdToLocalMidnight(selectedDate);
+        const selectedDateObj = ymdToLocalMidnight(effectiveSelectedDate);
         let isCurrentDateInRange = false;
         let twoDaysLater = null;
 
