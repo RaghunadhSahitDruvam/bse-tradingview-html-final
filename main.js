@@ -64,7 +64,7 @@ const generateProgressBar = (completed, total, width = 25) => {
   const pct = total > 0 ? completed / total : 0;
   const filled = Math.round(pct * width);
   const empty = width - filled;
-  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;
+  return `[${"█".repeat(filled)}${"░".repeat(empty)}]`;
 };
 
 // Launch a fresh Puppeteer browser
@@ -243,17 +243,29 @@ const runBrowserWorker = async (
 
       // ── Progress log ─────────────────────────────────────────────────────
       progressTracker.completed += batch.length;
-      const pct = ((progressTracker.completed / progressTracker.total) * 100).toFixed(1);
-      const bar = generateProgressBar(progressTracker.completed, progressTracker.total);
-      const breakoutsLocal = results.filter((r) => r.isBreakout === true).length;
+      const pct = (
+        (progressTracker.completed / progressTracker.total) *
+        100
+      ).toFixed(1);
+      const bar = generateProgressBar(
+        progressTracker.completed,
+        progressTracker.total,
+      );
+      const breakoutsLocal = results.filter(
+        (r) => r.isBreakout === true,
+      ).length;
       console.log(
         `📊 [B${browserIdx + 1} | batch ${batchNum}/${totalBatches}] ` +
           `${bar} ${progressTracker.completed}/${progressTracker.total} scraped — ${pct}% done` +
-          (breakoutsLocal > 0 ? ` │ 🎯 ${breakoutsLocal} breakout(s) so far` : ""),
+          (breakoutsLocal > 0
+            ? ` │ 🎯 ${breakoutsLocal} breakout(s) so far`
+            : ""),
       );
     }
 
-    const totalBreakoutsInWorker = results.filter((r) => r.isBreakout === true).length;
+    const totalBreakoutsInWorker = results.filter(
+      (r) => r.isBreakout === true,
+    ).length;
     console.log(
       `\n🏁 Browser ${browserIdx + 1}/${NUM_PARALLEL_BROWSERS}: Done — ` +
         `${stockSubset.length} stocks processed, ${totalBreakoutsInWorker} breakout(s) found`,
@@ -375,15 +387,12 @@ const main = async (customConfig) => {
     //   Browser 4 → blocks 3, 8, 13 ...  (stocks 15-19, 40-44, 65-69 …)
     //   Browser 5 → blocks 4, 9, 14 ...  (stocks 20-24, 45-49, 70-74 …)
     for (let i = 0; i < stocks.length; i += batchSize) {
-      const browserIdx =
-        Math.floor(i / batchSize) % NUM_PARALLEL_BROWSERS;
+      const browserIdx = Math.floor(i / batchSize) % NUM_PARALLEL_BROWSERS;
       browserQueues[browserIdx].push(...stocks.slice(i, i + batchSize));
     }
 
     browserQueues.forEach((queue, idx) => {
-      console.log(
-        `   🌐 Browser ${idx + 1}: ${queue.length} stocks`,
-      );
+      console.log(`   🌐 Browser ${idx + 1}: ${queue.length} stocks`);
     });
     console.log("");
 
@@ -409,9 +418,7 @@ const main = async (customConfig) => {
     console.log(`\n${"═".repeat(65)}`);
     console.log(`🏁 SCRAPING COMPLETE`);
     console.log(`   ✅ Total stocks processed : ${processedData.length}`);
-    console.log(
-      `   🎯 Breakout stocks found  : ${finalBreakoutStocks.length}`,
-    );
+    console.log(`   🎯 Breakout stocks found  : ${finalBreakoutStocks.length}`);
     console.log(`${"═".repeat(65)}\n`);
 
     // AI Analysis for breakout stocks
