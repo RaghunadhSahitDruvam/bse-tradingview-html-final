@@ -145,7 +145,9 @@ const fetchBseStocksDirectly = async () => {
   });
 
   const payload =
-    typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+    typeof response.data === "string"
+      ? JSON.parse(response.data)
+      : response.data;
 
   if (!payload || !Array.isArray(payload.Table)) {
     throw new Error("BSE API returned an unexpected payload shape");
@@ -218,7 +220,9 @@ const fetchBseStocks = async (customConfig) => {
     if (targetResponseBody !== null) {
       const payload = JSON.parse(targetResponseBody);
       if (payload && Array.isArray(payload.Table)) {
-        console.log(`✅ Loaded ${payload.Table.length} stocks from browser fallback`);
+        console.log(
+          `✅ Loaded ${payload.Table.length} stocks from browser fallback`,
+        );
         return payload.Table;
       }
     }
