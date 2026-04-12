@@ -10,6 +10,17 @@ const axios = require("axios");
 // Enable stealth mode for puppeteer
 puppeteer.use(StealthPlugin());
 
+const BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font"]);
+const BLOCKED_URL_PATTERNS = [
+  "google-analytics",
+  "googletagmanager",
+  "doubleclick",
+  "facebook.net",
+  "analytics",
+  "hotjar",
+  "sentry",
+];
+
 /**
  * Parse a TradingView timestamp string into a Date at local midnight.
  * Handles common formats like:
@@ -175,6 +186,23 @@ const fetch_tv_data = async (
 ) => {
   const page = await browser.newPage();
 
+  await page.setCacheEnabled(true);
+  await page.setRequestInterception(true);
+  page.on("request", (request) => {
+    const resourceType = request.resourceType();
+    const requestUrl = request.url().toLowerCase();
+    const shouldBlock =
+      BLOCKED_RESOURCE_TYPES.has(resourceType) ||
+      BLOCKED_URL_PATTERNS.some((pattern) => requestUrl.includes(pattern));
+
+    if (shouldBlock) {
+      request.abort();
+      return;
+    }
+
+    request.continue();
+  });
+
   // Extract all configuration values from scrapingConfig
   const {
     timeframe,
@@ -200,10 +228,10 @@ const fetch_tv_data = async (
       // Optimize page loading with faster wait condition
       await page.goto(
         `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
-        { waitUntil: "domcontentloaded", timeout: 20000 },
+        { waitUntil: "domcontentloaded", timeout: 60000 },
       );
       // Wait a bit for the page to stabilize
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (navigationError) {
       const errorMessage =
         navigationError.message || navigationError.toString();
@@ -243,8 +271,8 @@ const fetch_tv_data = async (
 
     try {
       // Wait for chart elements to load and switch to specified timeframe
-      await page.waitForSelector(canvasSelector, { timeout: 15000 });
-      await page.waitForSelector(timeframeSelector, { timeout: 15000 });
+      await page.waitForSelector(canvasSelector, { timeout: 60000 });
+      await page.waitForSelector(timeframeSelector, { timeout: 60000 });
       await page.click(timeframeSelector);
 
       // Trigger drawing tool shortcut (Alt + D)
@@ -253,7 +281,7 @@ const fetch_tv_data = async (
       await page.keyboard.up("Alt");
 
       // Reduced wait time for indicators to load
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // await new Promise((resolve) => setTimeout(resolve, 2000));
     } catch (error) {
       const errorMessage = error.message || error.toString();
       if (
@@ -298,7 +326,7 @@ const fetch_tv_data = async (
       const timestampSelector = indicatorSelectors.timeStampSelector;
 
       // Extract trendline value and timestamp
-      await page.waitForSelector(valueSelector, { timeout: 15000 });
+      await page.waitForSelector(valueSelector, { timeout: 60000 });
       const valueText = await page.$eval(valueSelector, (element) =>
         element.textContent.trim(),
       );
@@ -383,36 +411,35 @@ const fetch_tv_data = async (
       );
     }
 
-    // Get formatted company name (optimized with timeout and fallback)
-    let companyName = LONG_NAME.split(" - ")[0]; // Use original name as fallback
-    try {
-      // Format company name by removing common suffixes and special characters
-      const formattedName = companyName
-        .replaceAll("Ltd", "limited")
-        .replaceAll("LTD", "limited")
-        .replaceAll(".", " ")
-        .replaceAll("-$", " ")
-        .replaceAll("{", "")
-        .replaceAll("}", "")
-        .replaceAll("(", "")
-        .replaceAll(")", "")
-        .replaceAll("&", "and");
+    // Only resolve the formatted company name for confirmed breakout stocks.
+    let companyName = LONG_NAME.split(" - ")[0];
+    if (isBreakout === true) {
+      try {
+        const formattedName = companyName
+          .replaceAll("Ltd", "limited")
+          .replaceAll("LTD", "limited")
+          .replaceAll(".", " ")
+          .replaceAll("-$", " ")
+          .replaceAll("{", "")
+          .replaceAll("}", "")
+          .replaceAll("(", "")
+          .replaceAll(")", "")
+          .replaceAll("&", "and");
 
-      // Fetch with timeout to prevent blocking
-      const response = await Promise.race([
-        axios.get(
-          `https://miniphinzi.vercel.app/api/convert?name=${encodeURIComponent(
-            formattedName,
-          )}`,
-        ),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 3000),
-        ),
-      ]);
-      companyName = response.data;
-    } catch (err) {
-      // Silently fail without console error to reduce noise
-      companyName = LONG_NAME.split(" - ")[0]; // Use original name as fallback
+        const response = await Promise.race([
+          axios.get(
+            `https://miniphinzi.vercel.app/api/convert?name=${encodeURIComponent(
+              formattedName,
+            )}`,
+          ),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout")), 3000),
+          ),
+        ]);
+        companyName = response.data;
+      } catch (err) {
+        companyName = LONG_NAME.split(" - ")[0];
+      }
     }
 
     // Selector for trendline strength (optimized with shorter timeout)

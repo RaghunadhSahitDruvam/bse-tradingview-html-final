@@ -77,8 +77,34 @@ const launchBrowser = async (headless) => {
       "--disable-dev-shm-usage",
       "--disable-web-security",
       "--disable-features=VizDisplayCompositor",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-default-apps",
+      "--disable-background-networking",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-sync",
+      "--mute-audio",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--metrics-recording-only",
+      // ✅ ADD THESE — they make a massive difference:
+      "--disable-translate",
+      "--disable-notifications",
+      "--disable-infobars",
+      "--disable-popup-blocking",
+      "--disable-hang-monitor",
+      "--disable-prompt-on-repost",
+      "--disable-client-side-phishing-detection",
+      "--disable-component-update",
+      "--disable-domain-reliability",
+      "--disable-features=AudioServiceOutOfProcess",
+      "--no-zygote", // Faster process startup
+      "--single-process", // Useful on low-RAM servers (use carefully)
+      "--memory-pressure-off",
+      "--window-size=1280,720", // Smaller window = less rendering overhead
     ],
-    timeout: 30000,
+    timeout: 60000,
   });
 };
 
@@ -98,7 +124,10 @@ const configureBrowserTimeframe = async (browser, customConfig) => {
   await page.click(buttonSelector);
   await page.waitForSelector(config.saveButtonSelector, { timeout: 10000 });
   await page.click(config.saveButtonSelector);
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  // ✅ Wait for a network idle or a confirmation element after saving
+  await page
+    .waitForNavigation({ waitUntil: "networkidle2", timeout: 10000 })
+    .catch(() => {}); // silently ignore if no navigation occurs
   await page.close();
 };
 
