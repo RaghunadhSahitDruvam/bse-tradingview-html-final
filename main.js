@@ -79,8 +79,18 @@ const generateProgressBar = (completed, total, width = 25) => {
 // Launch a fresh Puppeteer browser
 const launchBrowser = async (headless) => {
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  const forceHeadless =
+    process.env.FORCE_HEADLESS === "true" ||
+    process.env.NODE_ENV === "production" ||
+    !process.env.DISPLAY;
+  const resolvedHeadless = forceHeadless ? true : headless;
+
+  if (forceHeadless && headless !== true) {
+    console.log("ℹ️  Forcing headless mode for server/container runtime");
+  }
+
   return puppeteer.launch({
-    headless,
+    headless: resolvedHeadless,
     ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
