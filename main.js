@@ -23,7 +23,7 @@ app.use(express.static(path.join(__dirname, "public")));
 let data = [];
 let breakoutStocks = [];
 let isCurrentlyProcessing = false;
-let currentBrowser = null;
+let activeBrowsers = []; // All currently open browsers (for parallel execution & graceful stop)
 let isLiveMode = false; // Track if we're in live mode for incremental updates
 
 // Validate indicator name against config
@@ -55,6 +55,231 @@ const getButtonSelector = (timeframe) => {
 // All timeframes and indicators for parallel scraping (excluding 5mi)
 const ALL_TIMEFRAMES = ["15m", "30m", "2h", "1d", "1w", "1m"];
 const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo"];
+
+// ─── Parallel browser configuration ──────────────────────────────────────────
+const NUM_PARALLEL_BROWSERS = 5;
+
+// Render a simple ASCII progress bar
+const generateProgressBar = (completed, total, width = 25) => {
+  const pct = total > 0 ? completed / total : 0;
+  const filled = Math.round(pct * width);
+  const empty = width - filled;
+  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;
+};
+
+// Launch a fresh Puppeteer browser
+const launchBrowser = async (headless) => {
+  return puppeteer.launch({
+    headless,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor",
+    ],
+    timeout: 30000,
+  });
+};
+
+// Open a page in the given browser, navigate to the chart base URL, and click
+// the correct timeframe button before saving — this rewrites the shared TV layout
+// so every subsequent stock page in that browser already uses the right timeframe.
+const configureBrowserTimeframe = async (browser, customConfig) => {
+  const page = await browser.newPage();
+  const cookiesPath = "./cookies.json";
+  if (fs.existsSync(cookiesPath)) {
+    const cookies = JSON.parse(fs.readFileSync(cookiesPath));
+    await page.setCookie(...cookies);
+  }
+  await page.goto(config.baseUrl);
+  const buttonSelector = getButtonSelector(customConfig.timeframe);
+  await page.waitForSelector(buttonSelector, { timeout: 10000 });
+  await page.click(buttonSelector);
+  await page.waitForSelector(config.saveButtonSelector, { timeout: 10000 });
+  await page.click(config.saveButtonSelector);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await page.close();
+};
+
+// Dedicated browser that intercepts the BSE XHR and returns the stock list.
+const fetchBseStocks = async (customConfig) => {
+  let browser;
+  try {
+    browser = await launchBrowser(customConfig.headless);
+    activeBrowsers.push(browser);
+
+    const page = await browser.newPage();
+    const cookiesPath = "./cookies.json";
+    if (fs.existsSync(cookiesPath)) {
+      const cookies = JSON.parse(fs.readFileSync(cookiesPath));
+      await page.setCookie(...cookies);
+    }
+    await page.setRequestInterception(true);
+    let targetResponseBody = null;
+    page.on("request", (request) => request.continue());
+    page.on("response", async (response) => {
+      if (
+        response.request().resourceType() === "xhr" &&
+        response.request().url().includes(config.targetRequestUrl)
+      ) {
+        targetResponseBody = await response.text();
+      }
+    });
+    await page.goto(config.bseUrl);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await page.close();
+    await browser.close();
+    activeBrowsers = activeBrowsers.filter((b) => b !== browser);
+
+    if (targetResponseBody !== null) {
+      return JSON.parse(targetResponseBody).Table;
+    }
+    return [];
+  } catch (error) {
+    if (browser) {
+      await browser.close().catch(() => {});
+      activeBrowsers = activeBrowsers.filter((b) => b !== browser);
+    }
+    throw error;
+  }
+};
+
+// One browser worker: configures timeframe, then scrapes its allocated stocks
+// in batches of customConfig.batchSize parallel tabs.
+const runBrowserWorker = async (
+  browserIdx,
+  stockSubset,
+  customConfig,
+  progressTracker,
+) => {
+  let browser;
+  try {
+    browser = await launchBrowser(customConfig.headless);
+    activeBrowsers.push(browser);
+
+    console.log(
+      `\n🌐 Browser ${browserIdx + 1}/${NUM_PARALLEL_BROWSERS}: Configuring timeframe (${customConfig.timeframe})...`,
+    );
+    await configureBrowserTimeframe(browser, customConfig);
+    console.log(
+      `✅ Browser ${browserIdx + 1}/${NUM_PARALLEL_BROWSERS}: Timeframe set — assigned ${stockSubset.length} stocks`,
+    );
+
+    const results = [];
+    const totalBatches = Math.ceil(stockSubset.length / customConfig.batchSize);
+
+    for (let i = 0; i < stockSubset.length; i += customConfig.batchSize) {
+      const batch = stockSubset.slice(i, i + customConfig.batchSize);
+      const batchNum = Math.floor(i / customConfig.batchSize) + 1;
+
+      const batchPromises = batch.map(async (stock) => {
+        const { scripname, ltradert, LONG_NAME } = stock;
+        try {
+          const completeConfig = {
+            ...customConfig,
+            canvasSelector: config.canvasSelector,
+            timeframeSelector: getButtonSelector(customConfig.timeframe),
+            indicatorSelectors: config.indicators[customConfig.indicatorName],
+            baseConfig: config,
+          };
+          const liveBreakout = await fetch_tv_data(
+            browser,
+            scripname,
+            ltradert,
+            LONG_NAME,
+            completeConfig,
+            customConfig.dateSelection || "today",
+          );
+          const stockResult = { ...stock, ...liveBreakout };
+
+          // In live mode, immediately surface breakout stocks
+          if (isLiveMode && stockResult.isBreakout === true) {
+            const exists = breakoutStocks.some(
+              (s) => s.scripname === stockResult.scripname,
+            );
+            if (!exists) {
+              breakoutStocks.push(stockResult);
+              console.log(
+                `🔴 LIVE: Added ${scripname} to breakout list (Total: ${breakoutStocks.length})`,
+              );
+            }
+          }
+
+          return stockResult;
+        } catch (error) {
+          const errorMessage = error.message || error.toString();
+          if (
+            errorMessage.includes("frame got detached") ||
+            errorMessage.includes("Protocol error") ||
+            errorMessage.includes("Connection closed") ||
+            errorMessage.includes("Target closed") ||
+            errorMessage.includes("Session closed")
+          ) {
+            console.log(
+              `⚠️  Browser ${browserIdx + 1}: Skipping ${scripname} (connection/frame error)`,
+            );
+          } else {
+            console.log(
+              `⚠️  Browser ${browserIdx + 1}: Skipping ${scripname} — ${errorMessage}`,
+            );
+          }
+          return {
+            ...stock,
+            isBreakout: false,
+            value: null,
+            comp_name: LONG_NAME,
+            current_market_price: parseFloat(ltradert) || 0,
+            trendline_strength: 0,
+            pivot_point_strength: 0,
+            ema_strength: 0,
+            rs_strength: 0,
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // ── Progress log ─────────────────────────────────────────────────────
+      progressTracker.completed += batch.length;
+      const pct = ((progressTracker.completed / progressTracker.total) * 100).toFixed(1);
+      const bar = generateProgressBar(progressTracker.completed, progressTracker.total);
+      const breakoutsLocal = results.filter((r) => r.isBreakout === true).length;
+      console.log(
+        `📊 [B${browserIdx + 1} | batch ${batchNum}/${totalBatches}] ` +
+          `${bar} ${progressTracker.completed}/${progressTracker.total} scraped — ${pct}% done` +
+          (breakoutsLocal > 0 ? ` │ 🎯 ${breakoutsLocal} breakout(s) so far` : ""),
+      );
+    }
+
+    const totalBreakoutsInWorker = results.filter((r) => r.isBreakout === true).length;
+    console.log(
+      `\n🏁 Browser ${browserIdx + 1}/${NUM_PARALLEL_BROWSERS}: Done — ` +
+        `${stockSubset.length} stocks processed, ${totalBreakoutsInWorker} breakout(s) found`,
+    );
+    return results;
+  } catch (error) {
+    console.error(`❌ Browser ${browserIdx + 1} crashed: ${error.message}`);
+    // Return neutral results so the main aggregation still works
+    return stockSubset.map((stock) => ({
+      ...stock,
+      isBreakout: false,
+      value: null,
+      comp_name: stock.LONG_NAME,
+      current_market_price: parseFloat(stock.ltradert) || 0,
+      trendline_strength: 0,
+      pivot_point_strength: 0,
+      ema_strength: 0,
+      rs_strength: 0,
+    }));
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+      activeBrowsers = activeBrowsers.filter((b) => b !== browser);
+    }
+  }
+};
 
 const formatLocalDate = (date) => {
   const year = date.getFullYear();
@@ -103,166 +328,91 @@ const resolveRequestedDate = (dateSelection, customDate) => {
   };
 };
 
-// Main scraping function
+// Main scraping function — orchestrates BSE fetch + 5 parallel browser workers
 const main = async (customConfig) => {
   try {
+    console.log(`\n${"═".repeat(65)}`);
     console.log(
-      `Starting scraping with timeframe: ${customConfig.timeframe}, Indicator: ${customConfig.indicatorName}`,
+      `🚀 SCRAPER START │ Timeframe: ${customConfig.timeframe} │ Indicator: ${customConfig.indicatorName}`,
+    );
+    console.log(
+      `   Browsers: ${NUM_PARALLEL_BROWSERS} │ Tabs/browser: ${customConfig.batchSize} │ Date: ${
+        customConfig.selectedDate || customConfig.dateSelection
+      }`,
+    );
+    console.log(`${"═".repeat(65)}\n`);
+
+    // ── Phase 1: Fetch BSE stock list ─────────────────────────────────────
+    console.log(`${"─".repeat(65)}`);
+    console.log(`📡 PHASE 1 — Fetching BSE market data`);
+    console.log(`${"─".repeat(65)}`);
+    const stocks = await fetchBseStocks(customConfig);
+
+    if (stocks.length === 0) {
+      console.log("⚠️  No stocks received from BSE API.");
+      return [];
+    }
+    console.log(`✅ ${stocks.length} stocks loaded from BSE\n`);
+
+    // ── Phase 2: Distribute stocks across browsers (round-robin by block) ─
+    console.log(`${"─".repeat(65)}`);
+    console.log(
+      `📋 PHASE 2 — Distributing stocks across ${NUM_PARALLEL_BROWSERS} browsers`,
+    );
+    console.log(`${"─".repeat(65)}`);
+
+    const batchSize = customConfig.batchSize;
+    const browserQueues = Array.from(
+      { length: NUM_PARALLEL_BROWSERS },
+      () => [],
     );
 
-    // Enhanced browser launch with error handling
-    let browser;
-    try {
-      browser = await puppeteer.launch({
-        headless: customConfig.headless,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-web-security",
-          "--disable-features=VizDisplayCompositor",
-        ],
-        timeout: 30000,
-      });
-      currentBrowser = browser; // Store reference for stopping
-    } catch (browserError) {
-      console.error("❌ Failed to launch browser:", browserError.message);
-      throw new Error(`Browser launch failed: ${browserError.message}`);
-    }
-    const page = await browser.newPage();
-    const cookiesPath = "./cookies.json";
-    if (fs.existsSync(cookiesPath)) {
-      const cookies = JSON.parse(fs.readFileSync(cookiesPath));
-      await page.setCookie(...cookies);
+    // Each consecutive block of batchSize stocks is assigned to the next browser
+    // in round-robin order, so:
+    //   Browser 1 → blocks 0, 5, 10 ...  (stocks  0-4,  25-29, 50-54 …)
+    //   Browser 2 → blocks 1, 6, 11 ...  (stocks  5-9,  30-34, 55-59 …)
+    //   Browser 3 → blocks 2, 7, 12 ...  (stocks 10-14, 35-39, 60-64 …)
+    //   Browser 4 → blocks 3, 8, 13 ...  (stocks 15-19, 40-44, 65-69 …)
+    //   Browser 5 → blocks 4, 9, 14 ...  (stocks 20-24, 45-49, 70-74 …)
+    for (let i = 0; i < stocks.length; i += batchSize) {
+      const browserIdx =
+        Math.floor(i / batchSize) % NUM_PARALLEL_BROWSERS;
+      browserQueues[browserIdx].push(...stocks.slice(i, i + batchSize));
     }
 
-    console.log("Step 1: Configuring TradingView chart settings...");
-    await page.goto(config.baseUrl);
-    const buttonSelector = getButtonSelector(customConfig.timeframe);
-    await page.waitForSelector(buttonSelector, { timeout: 10000 });
-    await page.click(buttonSelector);
-    await page.waitForSelector(config.saveButtonSelector, { timeout: 10000 });
-    await page.click(config.saveButtonSelector);
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    await page.close();
-
-    console.log("Step 2: Setting up network interception...");
-    const newPage = await browser.newPage();
-    await newPage.setRequestInterception(true);
-    let targetResponseBody = null;
-    newPage.on("request", (request) => request.continue());
-    newPage.on("response", async (response) => {
-      if (
-        response.request().resourceType() === "xhr" &&
-        response.request().url().includes(config.targetRequestUrl)
-      ) {
-        targetResponseBody = await response.text();
-      }
-    });
-
-    console.log("Step 3: Fetching BSE market data...");
-    await newPage.goto(config.bseUrl);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    let processedData = [];
-    if (targetResponseBody !== null) {
-      const stocks = JSON.parse(targetResponseBody).Table;
+    browserQueues.forEach((queue, idx) => {
       console.log(
-        `Found ${stocks.length} stocks. Processing in batches of ${customConfig.batchSize}...`,
+        `   🌐 Browser ${idx + 1}: ${queue.length} stocks`,
       );
+    });
+    console.log("");
 
-      for (let i = 0; i < stocks.length; i += customConfig.batchSize) {
-        const stockBatch = stocks.slice(i, i + customConfig.batchSize);
-        console.log(
-          `Processing batch ${
-            Math.floor(i / customConfig.batchSize) + 1
-          }/${Math.ceil(stocks.length / customConfig.batchSize)}`,
-        );
+    // ── Phase 3: Launch all browser workers in parallel ───────────────────
+    console.log(`${"─".repeat(65)}`);
+    console.log(
+      `⚡ PHASE 3 — Launching ${NUM_PARALLEL_BROWSERS} browsers in parallel`,
+    );
+    console.log(`${"─".repeat(65)}`);
 
-        const batchPromises = stockBatch.map(async (stock) => {
-          const { scripname, ltradert, LONG_NAME } = stock;
-          try {
-            const completeConfig = {
-              ...customConfig,
-              canvasSelector: config.canvasSelector,
-              timeframeSelector: getButtonSelector(customConfig.timeframe),
-              indicatorSelectors: config.indicators[customConfig.indicatorName],
-              baseConfig: config,
-            };
-            const liveBreakout = await fetch_tv_data(
-              browser,
-              scripname,
-              ltradert,
-              LONG_NAME,
-              completeConfig,
-              customConfig.dateSelection || "today",
-            );
-            const stockResult = { ...stock, ...liveBreakout };
+    const progressTracker = { completed: 0, total: stocks.length };
 
-            // In live mode, immediately add breakout stocks to the global array
-            if (isLiveMode && stockResult.isBreakout === true) {
-              // Check if stock is not already in the array (avoid duplicates)
-              const exists = breakoutStocks.some(
-                (s) => s.scripname === stockResult.scripname,
-              );
-              if (!exists) {
-                breakoutStocks.push(stockResult);
-                console.log(
-                  `🔴 LIVE: Added ${scripname} to breakout list (Total: ${breakoutStocks.length})`,
-                );
-              }
-            }
-
-            return stockResult;
-          } catch (error) {
-            // Enhanced error handling for various Puppeteer errors
-            const errorMessage = error.message || error.toString();
-            if (
-              errorMessage.includes("frame got detached") ||
-              errorMessage.includes("Protocol error") ||
-              errorMessage.includes("Connection closed") ||
-              errorMessage.includes("Target closed") ||
-              errorMessage.includes("Session closed")
-            ) {
-              console.log(
-                `⚠️  Skipping ${scripname} due to connection/frame error: ${errorMessage}`,
-              );
-            } else {
-              console.log(
-                `⚠️  Skipping ${scripname} due to error: ${errorMessage}`,
-              );
-            }
-            return {
-              ...stock,
-              isBreakout: false,
-              value: null,
-              comp_name: LONG_NAME,
-              current_market_price: parseFloat(ltradert) || 0,
-              trendline_strength: 0,
-              pivot_point_strength: 0,
-              ema_strength: 0,
-              rs_strength: 0,
-            };
-          }
-        });
-
-        const processedBatch = await Promise.all(batchPromises);
-        processedData.push(...processedBatch);
-      }
-    } else {
-      console.log("Target BSE API request not found.");
-    }
-
-    await newPage.close();
-    await browser.close();
-    currentBrowser = null; // Clear reference
+    const workerPromises = browserQueues.map((queue, browserIdx) =>
+      runBrowserWorker(browserIdx, queue, customConfig, progressTracker),
+    );
+    const allResults = await Promise.all(workerPromises);
+    const processedData = allResults.flat();
 
     const finalBreakoutStocks = processedData.filter(
       (stock) => stock.isBreakout === true,
     );
+
+    console.log(`\n${"═".repeat(65)}`);
+    console.log(`🏁 SCRAPING COMPLETE`);
+    console.log(`   ✅ Total stocks processed : ${processedData.length}`);
     console.log(
-      `Scraping complete. Found ${finalBreakoutStocks.length} breakout stocks out of ${processedData.length} processed.`,
+      `   🎯 Breakout stocks found  : ${finalBreakoutStocks.length}`,
     );
+    console.log(`${"═".repeat(65)}\n`);
 
     // AI Analysis for breakout stocks
     if (finalBreakoutStocks.length > 0) {
@@ -276,10 +426,8 @@ const main = async (customConfig) => {
     return finalBreakoutStocks;
   } catch (error) {
     console.error("Error in main scraping function:", error);
-    if (currentBrowser) {
-      await currentBrowser.close();
-      currentBrowser = null;
-    }
+    await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
+    activeBrowsers = [];
     throw error;
   }
 };
@@ -575,14 +723,14 @@ app.post("/api/stop-scraper", async (req, res) => {
       });
     }
 
-    console.log("🛑 Stop request received. Attempting to stop scraper...");
+    console.log(
+      `🛑 Stop request received. Closing ${activeBrowsers.length} active browser(s)...`,
+    );
 
-    // Close the browser if it exists
-    if (currentBrowser) {
-      await currentBrowser.close();
-      currentBrowser = null;
-      console.log("✅ Browser closed successfully");
-    }
+    // Close all active browsers in parallel
+    await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
+    activeBrowsers = [];
+    console.log("✅ All browsers closed successfully");
 
     // Reset processing flag
     isCurrentlyProcessing = false;
@@ -594,7 +742,7 @@ app.post("/api/stop-scraper", async (req, res) => {
   } catch (error) {
     console.error("Error stopping scraper:", error);
     isCurrentlyProcessing = false; // Reset flag even on error
-    currentBrowser = null;
+    activeBrowsers = [];
     res.status(500).json({
       success: false,
       message: "Error occurred while stopping scraper: " + error.message,
