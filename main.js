@@ -1,5 +1,6 @@
 // main.js
 // Required dependencies
+require("dotenv").config();
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const express = require("express");
@@ -10,6 +11,10 @@ const fetch_tv_data = require("./tv.js");
 const handleFileWriting = require("./handleWriteFile.js");
 const { analyzeBreakoutStocks } = require("./aiAnalysis.js");
 const { saveToLocalDataFolder } = require("./handleLocalDataWriting.js");
+const {
+  publishScrapeResults,
+  PUBLISHED_DATA_DIR,
+} = require("./publishScrapeResults.js");
 
 // Initialize Express app
 const app = express();
@@ -18,6 +23,7 @@ app.use(express.json());
 
 // Serve static files from the 'public' directory (where your index.html is)
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/published-data", express.static(PUBLISHED_DATA_DIR));
 
 // Global data storage
 let data = [];
@@ -25,6 +31,9 @@ let breakoutStocks = [];
 let isCurrentlyProcessing = false;
 let activeBrowsers = []; // All currently open browsers (for parallel execution & graceful stop)
 let isLiveMode = false; // Track if we're in live mode for incremental updates
+
+const COOKIES_PATH =
+  process.env.COOKIES_PATH || path.join(__dirname, "cookies.json");
 
 // Validate indicator name against config
 const validateIndicatorName = (indicatorName) => {
@@ -69,8 +78,10 @@ const generateProgressBar = (completed, total, width = 25) => {
 
 // Launch a fresh Puppeteer browser
 const launchBrowser = async (headless) => {
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   return puppeteer.launch({
     headless,
+    ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -113,9 +124,8 @@ const launchBrowser = async (headless) => {
 // so every subsequent stock page in that browser already uses the right timeframe.
 const configureBrowserTimeframe = async (browser, customConfig) => {
   const page = await browser.newPage();
-  const cookiesPath = "./cookies.json";
-  if (fs.existsSync(cookiesPath)) {
-    const cookies = JSON.parse(fs.readFileSync(cookiesPath));
+  if (fs.existsSync(COOKIES_PATH)) {
+    const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
     await page.setCookie(...cookies);
   }
   await page.goto(config.baseUrl);
@@ -139,9 +149,8 @@ const fetchBseStocks = async (customConfig) => {
     activeBrowsers.push(browser);
 
     const page = await browser.newPage();
-    const cookiesPath = "./cookies.json";
-    if (fs.existsSync(cookiesPath)) {
-      const cookies = JSON.parse(fs.readFileSync(cookiesPath));
+    if (fs.existsSync(COOKIES_PATH)) {
+      const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
       await page.setCookie(...cookies);
     }
     await page.setRequestInterception(true);
@@ -473,6 +482,11 @@ const runScraper = async (customConfig) => {
   isCurrentlyProcessing = true;
   try {
     const scrapedBreakoutStocks = await main(customConfig);
+    const publishedResult = await publishScrapeResults(scrapedBreakoutStocks, {
+      indicatorName: customConfig.indicatorName,
+      timeframe: customConfig.timeframe,
+    });
+
     if (scrapedBreakoutStocks.length === 0) {
       return {
         success: true,
@@ -480,18 +494,24 @@ const runScraper = async (customConfig) => {
         message: "No breakout stocks found.",
         fileName: null,
         breakoutStocks: 0,
+        publishedUrl: `/published-data/${publishedResult.dateLabel}.json`,
+        latestPublishedUrl: "/published-data/latest.json",
       };
     }
+
     const result = await handleFileWriting(scrapedBreakoutStocks, {
       indicatorName: customConfig.indicatorName,
       timeframe: customConfig.timeframe,
     });
+
     return {
       success: true,
       mode: "file",
       message: "Scraping completed successfully",
       fileName: result.fileName,
       breakoutStocks: scrapedBreakoutStocks.length,
+      publishedUrl: `/published-data/${publishedResult.dateLabel}.json`,
+      latestPublishedUrl: "/published-data/latest.json",
     };
   } catch (error) {
     console.error("Scraping failed:", error);
@@ -747,6 +767,27 @@ app.post("/api/run-scraper", async (req, res) => {
 // API endpoint to get live breakout stocks
 app.get("/api/breakouts", (req, res) => {
   res.json(breakoutStocks);
+});
+
+// API endpoint to get the latest published scrape result
+app.get("/api/published/latest", async (req, res) => {
+  try {
+    const latestPath = path.join(PUBLISHED_DATA_DIR, "latest.json");
+    if (!fs.existsSync(latestPath)) {
+      return res.status(404).json({
+        success: false,
+        message: "No published data found yet.",
+      });
+    }
+
+    const content = JSON.parse(fs.readFileSync(latestPath, "utf-8"));
+    res.json({ success: true, ...content });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
 });
 
 // API endpoint to stop the scraper

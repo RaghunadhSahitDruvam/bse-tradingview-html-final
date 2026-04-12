@@ -21,6 +21,8 @@ const BLOCKED_URL_PATTERNS = [
   "sentry",
 ];
 
+const COOKIES_PATH = process.env.COOKIES_PATH || `${__dirname}/cookies.json`;
+
 /**
  * Parse a TradingView timestamp string into a Date at local midnight.
  * Handles common formats like:
@@ -216,9 +218,8 @@ const fetch_tv_data = async (
   } = scrapingConfig;
 
   // Load saved cookies if they exist
-  const cookiesPath = "./cookies.json";
-  if (fs.existsSync(cookiesPath)) {
-    const cookies = JSON.parse(fs.readFileSync(cookiesPath));
+  if (fs.existsSync(COOKIES_PATH)) {
+    const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
     await page.setCookie(...cookies);
   }
 

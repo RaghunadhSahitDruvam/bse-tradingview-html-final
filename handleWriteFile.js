@@ -1,10 +1,17 @@
 // handleWriteFile.js
 const fs = require("fs").promises;
 const { existsSync } = require("fs");
+const path = require("path");
 const { format } = require("date-fns");
 const { exec } = require("child_process");
 const util = require("util");
 const execPromise = util.promisify(exec);
+
+const FRONTEND_ROOT =
+  process.env.FRONTEND_ROOT ||
+  path.join(__dirname, "generated-output", "frontend");
+
+const getFrontendPath = (...segments) => path.join(FRONTEND_ROOT, ...segments);
 
 // Helper function to convert timeframe to folder name
 const getTimeframeFolderName = (timeframe) => {
@@ -53,8 +60,15 @@ const handleFileWriting = async (data, options = {}) => {
     );
     if (indicatorName === "Volumetric-Ulgo") {
       // 1. Write data to volumetric data file
-      const VolumetricLevelDataDir = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/data/volumetric/${timeframeFolderName}`;
-      const volumetricDataPath = `${VolumetricLevelDataDir}/${currentDate}.ts`;
+      const VolumetricLevelDataDir = getFrontendPath(
+        "data",
+        "volumetric",
+        timeframeFolderName
+      );
+      const volumetricDataPath = path.join(
+        VolumetricLevelDataDir,
+        `${currentDate}.ts`
+      );
       // Create directories if they don't exist
       if (!existsSync(VolumetricLevelDataDir)) {
         await fs.mkdir(VolumetricLevelDataDir, { recursive: true });
@@ -90,13 +104,18 @@ const handleFileWriting = async (data, options = {}) => {
       console.log(`Data has been written to ${volumetricDataPath}`);
 
       // 2. Create trend-level page directory and file
-      const volumetricPageDir = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/app/volumetric/${timeframeFolderName}/${currentDate}`;
+      const volumetricPageDir = getFrontendPath(
+        "app",
+        "volumetric",
+        timeframeFolderName,
+        currentDate
+      );
       if (!existsSync(volumetricPageDir)) {
         await fs.mkdir(volumetricPageDir, { recursive: true });
       }
 
       // 3. Update home page to add new button
-      const homePagePath = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/app/page.tsx`;
+      const homePagePath = getFrontendPath("app", "page.tsx");
 
       try {
         const homePageContent = await fs.readFile(homePagePath, "utf-8");
@@ -430,8 +449,7 @@ const handleFileWriting = async (data, options = {}) => {
       const shouldCommitToGit = process.env.AUTO_COMMIT !== "false";
 
       if (shouldCommitToGit) {
-        const frontendDir =
-          "E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs";
+        const frontendDir = FRONTEND_ROOT;
 
         try {
           // Change to frontend directory
@@ -459,8 +477,8 @@ const handleFileWriting = async (data, options = {}) => {
         totalStocks,
         breakoutStocks: data.filter((stock) => stock.isBreakout === true)
           .length,
-        dataPath: trendLevelDataPath,
-        pagePath: `${trendLevelPageDir}/page.tsx`,
+        dataPath: volumetricDataPath,
+        pagePath: `${volumetricPageDir}/page.tsx`,
         generatedDate: currentDate,
       };
 
@@ -478,8 +496,15 @@ const handleFileWriting = async (data, options = {}) => {
     }
 
     // 1. Write data to trend-level data file
-    const trendLevelDataDir = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/data/trend-level/${timeframeFolderName}`;
-    const trendLevelDataPath = `${trendLevelDataDir}/${currentDate}.ts`;
+    const trendLevelDataDir = getFrontendPath(
+      "data",
+      "trend-level",
+      timeframeFolderName
+    );
+    const trendLevelDataPath = path.join(
+      trendLevelDataDir,
+      `${currentDate}.ts`
+    );
 
     // Create directories if they don't exist
     if (!existsSync(trendLevelDataDir)) {
@@ -520,13 +545,18 @@ export default stockData;`;
     console.log(`Data has been written to ${trendLevelDataPath}`);
 
     // 2. Create trend-level page directory and file
-    const trendLevelPageDir = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/app/trend-level/${timeframeFolderName}/${currentDate}`;
+    const trendLevelPageDir = getFrontendPath(
+      "app",
+      "trend-level",
+      timeframeFolderName,
+      currentDate
+    );
     if (!existsSync(trendLevelPageDir)) {
       await fs.mkdir(trendLevelPageDir, { recursive: true });
     }
 
     // 3. Update home page to add new button
-    const homePagePath = `E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs/app/page.tsx`;
+    const homePagePath = getFrontendPath("app", "page.tsx");
 
     try {
       const homePageContent = await fs.readFile(homePagePath, "utf-8");
@@ -860,8 +890,7 @@ export default stockData;`;
     const shouldCommitToGit = process.env.AUTO_COMMIT !== "false";
 
     if (shouldCommitToGit) {
-      const frontendDir =
-        "E:/coding/all-about-scraping/BSE NETWORK API/frontend/bsenetworkapi_frontend_nextjs";
+      const frontendDir = FRONTEND_ROOT;
 
       try {
         // Change to frontend directory

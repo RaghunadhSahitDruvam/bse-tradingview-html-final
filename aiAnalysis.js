@@ -1,11 +1,16 @@
 // aiAnalysis.js - AI Stock Analysis Module
 const OpenAI = require("openai");
 
+const megallmBaseUrl =
+  process.env.MEGALLM_BASE_URL || "https://ai.megallm.io/v1";
+const megallmApiKey =
+  process.env.MEGALLM_API_KEY ||
+  "sk-mega-3f1fdf9accc42637c174128d3b3e799ac306d48700a31f69ef05e8c746881da7";
+
 // Initialize OpenAI client with custom base URL
 const openai = new OpenAI({
-  baseURL: "https://ai.megallm.io/v1",
-  apiKey:
-    "sk-mega-3f1fdf9accc42637c174128d3b3e799ac306d48700a31f69ef05e8c746881da7",
+  baseURL: megallmBaseUrl,
+  apiKey: megallmApiKey,
 });
 
 // System prompt for short-term trading analysis (1-15 days)
