@@ -56,18 +56,18 @@ const handleFileWriting = async (data, options = {}) => {
     const timeframeDisplayName = getTimeframeDisplayName(timeframe);
 
     console.log(
-      `Processing ${totalStocks} stocks for ${indicatorName} indicator on ${timeframe} timeframe`
+      `Processing ${totalStocks} stocks for ${indicatorName} indicator on ${timeframe} timeframe`,
     );
     if (indicatorName === "Volumetric-Ulgo") {
       // 1. Write data to volumetric data file
       const VolumetricLevelDataDir = getFrontendPath(
         "data",
         "volumetric",
-        timeframeFolderName
+        timeframeFolderName,
       );
       const volumetricDataPath = path.join(
         VolumetricLevelDataDir,
-        `${currentDate}.ts`
+        `${currentDate}.ts`,
       );
       // Create directories if they don't exist
       if (!existsSync(VolumetricLevelDataDir)) {
@@ -108,7 +108,7 @@ const handleFileWriting = async (data, options = {}) => {
         "app",
         "volumetric",
         timeframeFolderName,
-        currentDate
+        currentDate,
       );
       if (!existsSync(volumetricPageDir)) {
         await fs.mkdir(volumetricPageDir, { recursive: true });
@@ -123,7 +123,7 @@ const handleFileWriting = async (data, options = {}) => {
         // Parse the existing content to find the appropriate timeframe array
         const timeframeProperty = timeframeFolderName;
         const timeframeMatch = homePageContent.match(
-          new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`)
+          new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`),
         );
 
         if (timeframeMatch) {
@@ -133,12 +133,12 @@ const handleFileWriting = async (data, options = {}) => {
           // Replace the old array with updated one
           const updatedContent = homePageContent.replace(
             new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`),
-            `${timeframeProperty}: [${existingButtons}${newButton}\n    ]`
+            `${timeframeProperty}: [${existingButtons}${newButton}\n    ]`,
           );
 
           await fs.writeFile(homePagePath, updatedContent, "utf-8");
           console.log(
-            `Updated home page with new ${timeframeDisplayName} button`
+            `Updated home page with new ${timeframeDisplayName} button`,
           );
         }
       } catch (homePageError) {
@@ -458,7 +458,7 @@ const handleFileWriting = async (data, options = {}) => {
           // Git operations
           await execPromise("git add .");
           await execPromise(
-            `git commit -m "Updated ${timeframeDisplayName} analysis for ${currentDate} - ${indicatorName}"`
+            `git commit -m "Updated ${timeframeDisplayName} analysis for ${currentDate} - ${indicatorName}"`,
           );
           await execPromise("git push origin master");
 
@@ -499,11 +499,11 @@ const handleFileWriting = async (data, options = {}) => {
     const trendLevelDataDir = getFrontendPath(
       "data",
       "trend-level",
-      timeframeFolderName
+      timeframeFolderName,
     );
     const trendLevelDataPath = path.join(
       trendLevelDataDir,
-      `${currentDate}.ts`
+      `${currentDate}.ts`,
     );
 
     // Create directories if they don't exist
@@ -549,7 +549,7 @@ export default stockData;`;
       "app",
       "trend-level",
       timeframeFolderName,
-      currentDate
+      currentDate,
     );
     if (!existsSync(trendLevelPageDir)) {
       await fs.mkdir(trendLevelPageDir, { recursive: true });
@@ -564,7 +564,7 @@ export default stockData;`;
       // Parse the existing content to find the appropriate timeframe array
       const timeframeProperty = timeframeFolderName;
       const timeframeMatch = homePageContent.match(
-        new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`)
+        new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`),
       );
 
       if (timeframeMatch) {
@@ -574,12 +574,12 @@ export default stockData;`;
         // Replace the old array with updated one
         const updatedContent = homePageContent.replace(
           new RegExp(`${timeframeProperty}:\\s*\\[([\\s\\S]*?)\\]`),
-          `${timeframeProperty}: [${existingButtons}${newButton}\n    ]`
+          `${timeframeProperty}: [${existingButtons}${newButton}\n    ]`,
         );
 
         await fs.writeFile(homePagePath, updatedContent, "utf-8");
         console.log(
-          `Updated home page with new ${timeframeDisplayName} button`
+          `Updated home page with new ${timeframeDisplayName} button`,
         );
       }
     } catch (homePageError) {
@@ -899,7 +899,7 @@ export default stockData;`;
         // Git operations
         await execPromise("git add .");
         await execPromise(
-          `git commit -m "Updated ${timeframeDisplayName} analysis for ${currentDate} - ${indicatorName}"`
+          `git commit -m "Updated ${timeframeDisplayName} analysis for ${currentDate} - ${indicatorName}"`,
         );
         await execPromise("git push origin master");
 

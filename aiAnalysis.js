@@ -87,7 +87,7 @@ const analyzeStock = async (stockData) => {
   } = stockData;
 
   console.log(
-    `\n🤖 [AI ANALYSIS] Starting analysis for: ${LONG_NAME || scripname}`
+    `\n🤖 [AI ANALYSIS] Starting analysis for: ${LONG_NAME || scripname}`,
   );
   console.log(`   📊 Current Price: ₹${ltradert}`);
   console.log(`   📈 Breakout Value: ₹${value}`);
@@ -145,7 +145,7 @@ Provide your SHORT-TERM (1-15 days) trading recommendation in the STRICT FORMAT 
     return analysis;
   } catch (error) {
     console.error(
-      `   ❌ AI analysis failed for ${scripname}: ${error.message}`
+      `   ❌ AI analysis failed for ${scripname}: ${error.message}`,
     );
     return `AI Analysis Error: ${error.message}`;
   }
@@ -159,7 +159,7 @@ Provide your SHORT-TERM (1-15 days) trading recommendation in the STRICT FORMAT 
 const analyzeBreakoutStocks = async (breakoutStocks) => {
   console.log(`\n${"=".repeat(60)}`);
   console.log(
-    `🤖 AI ANALYSIS MODULE - Processing ${breakoutStocks.length} breakout stocks`
+    `🤖 AI ANALYSIS MODULE - Processing ${breakoutStocks.length} breakout stocks`,
   );
   console.log(`${"=".repeat(60)}`);
 
@@ -170,7 +170,7 @@ const analyzeBreakoutStocks = async (breakoutStocks) => {
     console.log(
       `\n📌 [${i + 1}/${breakoutStocks.length}] Processing: ${
         stock.LONG_NAME || stock.scripname
-      }`
+      }`,
     );
 
     try {
@@ -197,7 +197,7 @@ const analyzeBreakoutStocks = async (breakoutStocks) => {
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(
-    `✅ AI ANALYSIS COMPLETE - Processed ${analyzedStocks.length} stocks`
+    `✅ AI ANALYSIS COMPLETE - Processed ${analyzedStocks.length} stocks`,
   );
   console.log(`${"=".repeat(60)}\n`);
 
