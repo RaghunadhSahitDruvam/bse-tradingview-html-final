@@ -1,6 +1,7 @@
 // main.js
 // Required dependencies
 require("dotenv").config();
+const axios = require("axios");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const express = require("express");
@@ -89,8 +90,10 @@ const launchBrowser = async (headless) => {
     console.log("ℹ️  Forcing headless mode for server/container runtime");
   }
 
+  const headlessMode = resolvedHeadless === true ? "new" : resolvedHeadless;
+
   return puppeteer.launch({
-    headless: resolvedHeadless,
+    headless: headlessMode,
     ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
@@ -129,6 +132,28 @@ const launchBrowser = async (headless) => {
   });
 };
 
+const fetchBseStocksDirectly = async () => {
+  const response = await axios.get(config.targetRequestUrl, {
+    timeout: 30000,
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      Referer: config.bseUrl,
+      "User-Agent":
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+      Origin: "https://www.bseindia.com",
+    },
+  });
+
+  const payload =
+    typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+
+  if (!payload || !Array.isArray(payload.Table)) {
+    throw new Error("BSE API returned an unexpected payload shape");
+  }
+
+  return payload.Table;
+};
+
 // Open a page in the given browser, navigate to the chart base URL, and click
 // the correct timeframe button before saving — this rewrites the shared TV layout
 // so every subsequent stock page in that browser already uses the right timeframe.
@@ -153,6 +178,16 @@ const configureBrowserTimeframe = async (browser, customConfig) => {
 
 // Dedicated browser that intercepts the BSE XHR and returns the stock list.
 const fetchBseStocks = async (customConfig) => {
+  try {
+    const directStocks = await fetchBseStocksDirectly();
+    console.log(`✅ Loaded ${directStocks.length} stocks from direct BSE API`);
+    return directStocks;
+  } catch (directError) {
+    console.warn(
+      `⚠️  Direct BSE API fetch failed, falling back to browser interception: ${directError.message}`,
+    );
+  }
+
   let browser;
   try {
     browser = await launchBrowser(customConfig.headless);
@@ -181,7 +216,11 @@ const fetchBseStocks = async (customConfig) => {
     activeBrowsers = activeBrowsers.filter((b) => b !== browser);
 
     if (targetResponseBody !== null) {
-      return JSON.parse(targetResponseBody).Table;
+      const payload = JSON.parse(targetResponseBody);
+      if (payload && Array.isArray(payload.Table)) {
+        console.log(`✅ Loaded ${payload.Table.length} stocks from browser fallback`);
+        return payload.Table;
+      }
     }
     return [];
   } catch (error) {
