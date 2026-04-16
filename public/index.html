@@ -426,7 +426,7 @@
           <span class="config-value" id="summaryIndicator">TrendLines</span>
         </div>
         <div class="config-item">
-          <span>Batch Size:</span>
+          <span>Parallel Browsers:</span>
           <span class="config-value" id="summaryBatchSize">10</span>
         </div>
         <div class="config-item">
@@ -466,15 +466,22 @@
         </div>
 
         <div class="form-group">
-          <label for="batchSize">Batch Size:</label>
-          <input
-            type="number"
-            id="batchSize"
-            name="batchSize"
-            value="5"
-            min="1"
-            max="50"
-          />
+          <label for="batchSize">Parallel Browsers:</label>
+            <input
+              type="number"
+              id="batchSize"
+              name="batchSize"
+              value="5"
+              min="1"
+              max="20"
+            />
+            <div
+              style="margin-top: 8px; color: #667085; font-size: 0.9em; line-height: 1.4"
+            >
+              Enter how many browsers should run at the same time. For example,
+              <strong>5</strong> launches 5 parallel browsers and splits stocks
+              across them.
+            </div>
         </div>
 
         <div class="form-group">
@@ -656,7 +663,7 @@
           timeframeMap[timeframe] || timeframe;
         document.getElementById("summaryIndicator").textContent =
           indicatorMap[indicator] || indicator;
-        document.getElementById("summaryBatchSize").textContent = batchSize;
+         document.getElementById("summaryBatchSize").textContent = `${batchSize} browser${batchSize === "1" ? "" : "s"}`;
         document.getElementById("summaryDateSelection").textContent =
           dateSelectionMap[dateSelection] || dateSelection;
         document.getElementById("summaryMode").textContent = liveMode

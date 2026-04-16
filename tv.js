@@ -2,7 +2,6 @@
 
 // Required dependencies
 const fs = require("fs");
-const { timeout } = require("puppeteer");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const axios = require("axios");
@@ -169,24 +168,10 @@ function resolveSelectedDate(dateSelection, selectedDate) {
   return toYmdLocal(today);
 }
 
-/**
- * Fetches trading data from TradingView for a given stock
- * @param {Object} browser - Puppeteer browser instance
- * @param {string} scripname - Stock symbol
- * @param {number} ltradert - Last traded price
- * @param {string} LONG_NAME - Full company name
- * @param {Object} scrapingConfig - Complete configuration object with all selectors and settings
- * @returns {Object} Trading data including breakout status, value and company name
- */
-const fetch_tv_data = async (
-  browser,
-  scripname,
-  ltradert,
-  LONG_NAME,
-  scrapingConfig,
-  dateSelection = "today",
-) => {
-  const page = await browser.newPage();
+async function prepareTradingViewPage(page) {
+  if (page.__tvPrepared) {
+    return;
+  }
 
   await page.setCacheEnabled(true);
   await page.setRequestInterception(true);
@@ -205,6 +190,261 @@ const fetch_tv_data = async (
     request.continue();
   });
 
+  page.__tvPrepared = true;
+}
+
+async function loadCookiesIfPresent(page) {
+  if (fs.existsSync(COOKIES_PATH)) {
+    const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
+    await page.setCookie(...cookies);
+  }
+}
+
+async function waitForChartToSettle(
+  page,
+  canvasSelector,
+  valueSelector,
+  timeoutMs,
+) {
+  await page.waitForSelector(canvasSelector, { timeout: timeoutMs });
+  await page.waitForSelector(valueSelector, { timeout: timeoutMs });
+}
+
+/**
+ * STRATEGY 1 (fastest): Navigate directly via URL — no UI search needed.
+ * TradingView accepts ?symbol=BSE:SCRIPNAME in the URL and reloads the chart.
+ * This is the same as changing the symbol from the address bar and is instant.
+ */
+async function switchSymbolViaUrl(page, scripname) {
+  const chartId = "yenE16ib"; // locked chart layout ID
+  const targetUrl = `https://in.tradingview.com/chart/${chartId}/?symbol=BSE%3A${scripname}`;
+  await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+}
+
+/**
+ * STRATEGY 2: Intercept TradingView's own symbol-search XHR and inject the
+ * first result's symbol directly via their internal JS API — completely bypasses
+ * the slow search-results dropdown rendering in headless Chromium.
+ */
+async function switchSymbolViaApiIntercept(page, scripname, baseConfig) {
+  const { symbolSearchButtonSelector, symbolSearchInputSelector } = baseConfig;
+
+  // Try to use TradingView's internal chart API to switch the symbol directly
+  // without needing the search dropdown to render.
+  const switched = await page.evaluate((sym) => {
+    try {
+      // TradingView exposes a global chart widget on the window
+      const tvWidget =
+        window.tvWidget ||
+        window._tvWidget ||
+        (window.TradingView && window.TradingView.widget);
+      if (tvWidget && typeof tvWidget.setSymbol === "function") {
+        tvWidget.setSymbol(`BSE:${sym}`, null, () => {});
+        return true;
+      }
+      // Try iframe-based widget
+      const frames = Array.from(document.querySelectorAll("iframe"));
+      for (const f of frames) {
+        try {
+          const fw = f.contentWindow;
+          if (
+            fw &&
+            fw.tvWidget &&
+            typeof fw.tvWidget.setSymbol === "function"
+          ) {
+            fw.tvWidget.setSymbol(`BSE:${sym}`, null, () => {});
+            return true;
+          }
+        } catch (_) {}
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }, scripname);
+
+  if (switched) {
+    // Give the chart a moment to start loading the new symbol
+    await new Promise((r) => setTimeout(r, 1000));
+    return true;
+  }
+
+  // Fall back to opening the search UI
+  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 10000 });
+  await page.click(symbolSearchButtonSelector);
+  await page.waitForSelector(symbolSearchInputSelector, { timeout: 10000 });
+
+  // Clear + type using evaluate (sets value directly, bypassing slow key events)
+  await page.evaluate(
+    (sel, val) => {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      ).set;
+      nativeInputValueSetter.call(el, val);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    symbolSearchInputSelector,
+    scripname,
+  );
+
+  return false;
+}
+
+/**
+ * STRATEGY 3 (UI fallback): The original approach but with a 30-second wait
+ * window and smarter retry that watches for the XHR to complete first.
+ */
+async function switchSymbolViaUiFallback(page, scripname, baseConfig) {
+  const {
+    symbolSearchButtonSelector,
+    symbolSearchInputSelector,
+    symbolSearchFirstResultSelector,
+  } = baseConfig;
+
+  const previousUrl = page.url();
+
+  // Set up an XHR watcher BEFORE opening the search — so we catch the response
+  let searchXhrDone = false;
+  const searchXhrWatcher = page
+    .waitForResponse(
+      (res) =>
+        res.url().includes("symbol_search") ||
+        res.url().includes("search?text=") ||
+        res.url().includes("/search?query="),
+      { timeout: 30000 },
+    )
+    .then(() => {
+      searchXhrDone = true;
+    })
+    .catch(() => {});
+
+  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 15000 });
+  await page.click(symbolSearchButtonSelector);
+  await page.waitForSelector(symbolSearchInputSelector, { timeout: 15000 });
+
+  // Reliable field clear
+  await page.click(symbolSearchInputSelector);
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyA");
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Backspace");
+
+  // Type with a moderate delay — not too fast (misses debounce), not too slow
+  await page.type(symbolSearchInputSelector, scripname, { delay: 60 });
+
+  // Wait up to 30 seconds total for results to appear
+  let resultsLoaded = false;
+  const deadline = Date.now() + 30000;
+
+  while (Date.now() < deadline && !resultsLoaded) {
+    try {
+      await page.waitForSelector(symbolSearchFirstResultSelector, {
+        timeout: 5000,
+      });
+
+      const hasResults = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el && el.innerText && el.innerText.trim().length > 0;
+      }, symbolSearchFirstResultSelector);
+
+      if (hasResults) {
+        resultsLoaded = true;
+        break;
+      }
+    } catch (_) {}
+
+    // If XHR already completed but results aren't showing, retype
+    if (searchXhrDone && !resultsLoaded) {
+      await page.click(symbolSearchInputSelector);
+      await page.keyboard.down("Control");
+      await page.keyboard.press("KeyA");
+      await page.keyboard.up("Control");
+      await page.keyboard.press("Backspace");
+      await new Promise((r) => setTimeout(r, 300));
+      await page.type(symbolSearchInputSelector, scripname, { delay: 60 });
+      searchXhrDone = false;
+    }
+
+    await new Promise((r) => setTimeout(r, 800));
+  }
+
+  if (!resultsLoaded) {
+    throw new Error(
+      `[UI Fallback] Symbol search results never appeared for "${scripname}" after 30s`,
+    );
+  }
+
+  await Promise.allSettled([
+    page.waitForFunction(
+      (lastUrl) => window.location.href !== lastUrl,
+      { timeout: 20000 },
+      previousUrl,
+    ),
+    page.click(symbolSearchFirstResultSelector),
+  ]);
+}
+
+/**
+ * Main symbol switcher — tries the fastest method first, falls back gracefully.
+ *
+ * When reuseSymbolSearch=true the caller already navigated to the base URL once.
+ * We switch symbol using URL navigation (Strategy 1) which is instant and has
+ * zero dependency on the search dropdown rendering speed in headless Chromium.
+ */
+async function switchSymbolWithinTradingView(page, scripname, baseConfig) {
+  // Strategy 1: Direct URL navigation — fastest, most reliable in headless Chromium.
+  // No search dialog, no waiting for XHR results. Just navigate.
+  try {
+    await switchSymbolViaUrl(page, scripname);
+    return; // success — skip everything else
+  } catch (urlErr) {
+    console.log(
+      `⚠️  [${scripname}] URL strategy failed (${urlErr.message}), trying API intercept...`,
+    );
+  }
+
+  // Strategy 2: Inject via TradingView's internal JS API (no dropdown needed)
+  try {
+    const apiWorked = await switchSymbolViaApiIntercept(
+      page,
+      scripname,
+      baseConfig,
+    );
+    if (apiWorked) return;
+  } catch (apiErr) {
+    console.log(
+      `⚠️  [${scripname}] API intercept strategy failed (${apiErr.message}), using UI fallback...`,
+    );
+  }
+
+  // Strategy 3: Full UI search with 30-second window
+  await switchSymbolViaUiFallback(page, scripname, baseConfig);
+}
+
+/**
+ * Fetches trading data from TradingView for a given stock
+ * @param {Object} browser - Puppeteer browser instance
+ * @param {string} scripname - Stock symbol
+ * @param {number} ltradert - Last traded price
+ * @param {string} LONG_NAME - Full company name
+ * @param {Object} scrapingConfig - Complete configuration object with all selectors and settings
+ * @returns {Object} Trading data including breakout status, value and company name
+ */
+const fetch_tv_data = async (
+  pageOrBrowser,
+  scripname,
+  ltradert,
+  LONG_NAME,
+  scrapingConfig,
+  dateSelection = "today",
+) => {
+  const shouldReusePage = typeof pageOrBrowser?.goto === "function";
+  const page = shouldReusePage ? pageOrBrowser : await pageOrBrowser.newPage();
+
   // Extract all configuration values from scrapingConfig
   const {
     timeframe,
@@ -215,24 +455,24 @@ const fetch_tv_data = async (
     baseConfig,
     LIVE_MODE,
     selectedDate,
+    reuseSymbolSearch,
+    openDataWindow,
   } = scrapingConfig;
 
-  // Load saved cookies if they exist
-  if (fs.existsSync(COOKIES_PATH)) {
-    const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
-    await page.setCookie(...cookies);
-  }
+  await prepareTradingViewPage(page);
+  await loadCookiesIfPresent(page);
 
   try {
     // Navigate to TradingView chart page with enhanced error handling
     try {
-      // Optimize page loading with faster wait condition
-      await page.goto(
-        `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
-        { waitUntil: "domcontentloaded", timeout: 60000 },
-      );
-      // Wait a bit for the page to stabilize
-      // await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (reuseSymbolSearch) {
+        await switchSymbolWithinTradingView(page, scripname, baseConfig);
+      } else {
+        await page.goto(
+          `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
+          { waitUntil: "domcontentloaded", timeout: 15000 },
+        );
+      }
     } catch (navigationError) {
       const errorMessage =
         navigationError.message || navigationError.toString();
@@ -252,12 +492,6 @@ const fetch_tv_data = async (
           `⚠️  Failed to navigate to ${scripname}: ${errorMessage}. Skipping...`,
         );
       }
-
-      try {
-        await page.close();
-      } catch (closeError) {
-        console.log(`Warning: Could not close page for ${scripname}`);
-      }
       return {
         isBreakout: null,
         value: null,
@@ -271,18 +505,16 @@ const fetch_tv_data = async (
     }
 
     try {
-      // Wait for chart elements to load and switch to specified timeframe
-      await page.waitForSelector(canvasSelector, { timeout: 60000 });
-      await page.waitForSelector(timeframeSelector, { timeout: 60000 });
-      await page.click(timeframeSelector);
+      const valueSelector = indicatorSelectors.selector;
+      await waitForChartToSettle(page, canvasSelector, valueSelector, 15000);
 
-      // Trigger drawing tool shortcut (Alt + D)
-      await page.keyboard.down("Alt");
-      await page.keyboard.press("KeyD");
-      await page.keyboard.up("Alt");
+      if (openDataWindow) {
+        await page.keyboard.down("Alt");
+        await page.keyboard.press("KeyD");
+        await page.keyboard.up("Alt");
 
-      // Reduced wait time for indicators to load
-      // await new Promise((resolve) => setTimeout(resolve, 2000));
+        await page.waitForSelector(valueSelector, { timeout: 15000 });
+      }
     } catch (error) {
       const errorMessage = error.message || error.toString();
       if (
@@ -299,12 +531,6 @@ const fetch_tv_data = async (
         console.log(
           `⚠️  Failed to find selectors for ${scripname}: ${errorMessage}. Skipping...`,
         );
-      }
-
-      try {
-        await page.close();
-      } catch (closeError) {
-        console.log(`Warning: Could not close page for ${scripname}`);
       }
       return {
         isBreakout: null,
@@ -327,7 +553,7 @@ const fetch_tv_data = async (
       const timestampSelector = indicatorSelectors.timeStampSelector;
 
       // Extract trendline value and timestamp
-      await page.waitForSelector(valueSelector, { timeout: 60000 });
+      await page.waitForSelector(valueSelector, { timeout: 15000 });
       const valueText = await page.$eval(valueSelector, (element) =>
         element.textContent.trim(),
       );
@@ -517,7 +743,9 @@ const fetch_tv_data = async (
       // RS strength selector not found, value remains 0
     }
 
-    await page.close();
+    if (!shouldReusePage) {
+      await page.close();
+    }
 
     const result = {
       isBreakout,
@@ -563,11 +791,12 @@ const fetch_tv_data = async (
       );
     }
 
-    // Safely close the page
-    try {
-      await page.close();
-    } catch (closeError) {
-      console.log(`Warning: Could not close page for ${scripname}`);
+    if (!shouldReusePage) {
+      try {
+        await page.close();
+      } catch (closeError) {
+        console.log(`Warning: Could not close page for ${scripname}`);
+      }
     }
 
     return {

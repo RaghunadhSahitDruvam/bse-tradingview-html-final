@@ -21,6 +21,12 @@ const config = {
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(7)",
   saveButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(14) > div > div > button",
+  symbolSearchButtonSelector:
+    "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(2) > div > button:first-of-type",
+  symbolSearchInputSelector:
+    "body > div:nth-of-type(6) > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > input",
+  symbolSearchFirstResultSelector:
+    "body > div:nth-of-type(6) > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5)",
   targetRequestUrl:
     "https://api.bseindia.com/BseIndiaAPI/api/MktRGainerLoserDataeqto/w?GLtype=gainer&IndxGrp=AllMkt&IndxGrpval=AllMkt&orderby=all",
   bseUrl:
