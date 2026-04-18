@@ -69,6 +69,7 @@ const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo"];
 const DEFAULT_BROWSER_COUNT = 1;
 const MAX_BROWSER_COUNT = 20;
 const BROWSER_RETRY_DELAY_MS = 2000;
+const BROWSER_CLOSE_TIMEOUT_MS = 60000;
 
 // Render a simple ASCII progress bar
 const generateProgressBar = (completed, total, width = 25) => {
@@ -120,12 +121,32 @@ const buildNeutralStockResult = (stock) => ({
   rs_strength: 0,
 });
 
+const closeTargetWithTimeout = async (label, closeFn) => {
+  try {
+    await Promise.race([
+      closeFn(),
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`${label} close timeout after 60s`)),
+          BROWSER_CLOSE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (error) {
+    console.log(`⚠️  ${error.message}. Continuing shutdown flow.`);
+  }
+};
+
 const cleanupBrowserSession = async (browser, page) => {
   if (page) {
-    await page.close().catch(() => {});
+    await closeTargetWithTimeout("Page", async () => {
+      await page.close().catch(() => {});
+    });
   }
   if (browser) {
-    await browser.close().catch(() => {});
+    await closeTargetWithTimeout("Browser", async () => {
+      await browser.close().catch(() => {});
+    });
     activeBrowsers = activeBrowsers.filter((b) => b !== browser);
   }
 };
@@ -286,18 +307,67 @@ const fetchBseStocks = async (customConfig) => {
   }
 };
 
+const STOCK_TIMEOUT_MS = 120000;
+const BATCH_TIMEOUT_BUFFER_MS = 60000;
+
+const withTimeout = async (promise, timeoutMs, timeoutMessage) => {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+};
+
+const closeAllActiveBrowsers = async (reason) => {
+  if (activeBrowsers.length === 0) {
+    return;
+  }
+
+  console.log(
+    `🛑 ${reason} Closing ${activeBrowsers.length} active browser(s)...`,
+  );
+  const browsersToClose = [...activeBrowsers];
+  activeBrowsers = [];
+
+  try {
+    await Promise.all(
+      browsersToClose.map((browser, index) =>
+        closeTargetWithTimeout(`Browser ${index + 1}`, async () => {
+          await browser.close().catch(() => {});
+        }),
+      ),
+    );
+    console.log(`✅ ${reason} All active browsers closed.`);
+  } catch (error) {
+    console.log(`⚠️  ${reason} ${error.message}. Continuing anyway.`);
+  }
+};
+
 const runBrowserWorker = async (
   browserIdx,
   stockSubset,
   customConfig,
   progressTracker,
   browserCount,
+  workerState = null,
 ) => {
   const results = [];
   let currentIndex = 0;
   let launchAttempt = 0;
   let browser = null;
   let page = null;
+
+  if (workerState) {
+    workerState.results = results;
+    workerState.currentIndex = currentIndex;
+  }
 
   while (currentIndex < stockSubset.length) {
     try {
@@ -332,13 +402,18 @@ const runBrowserWorker = async (
             reuseSymbolSearch: currentIndex > 0,
             openDataWindow: currentIndex === 0,
           };
-          const liveBreakout = await fetch_tv_data(
-            page,
-            scripname,
-            ltradert,
-            LONG_NAME,
-            completeConfig,
-            customConfig.dateSelection || "today",
+          
+          const liveBreakout = await withTimeout(
+            fetch_tv_data(
+              page,
+              scripname,
+              ltradert,
+              LONG_NAME,
+              completeConfig,
+              customConfig.dateSelection || "today",
+            ),
+            STOCK_TIMEOUT_MS,
+            `Stock processing timeout (${STOCK_TIMEOUT_MS / 1000}s) for ${scripname}`,
           );
           stockResult = { ...stock, ...liveBreakout };
 
@@ -355,6 +430,14 @@ const runBrowserWorker = async (
           }
         } catch (error) {
           const errorMessage = error.message || error.toString();
+          
+          if (errorMessage.includes("Stock processing timeout")) {
+            console.log(
+              `⏱️ Browser ${browserIdx + 1}: TIMEOUT for ${scripname} — skipping and restarting browser`,
+            );
+            throw new Error(`Stock timeout triggered browser restart: ${scripname}`);
+          }
+          
           if (isRecoverableBrowserError(error)) {
             throw error;
           }
@@ -382,6 +465,9 @@ const runBrowserWorker = async (
 
         results.push(stockResult);
         currentIndex += 1;
+        if (workerState) {
+          workerState.currentIndex = currentIndex;
+        }
         progressTracker.completed += 1;
         const pct = (
           (progressTracker.completed / progressTracker.total) *
@@ -482,13 +568,11 @@ const resolveRequestedDate = (dateSelection, customDate) => {
   };
 };
 
-// Calculate batch size for 5% milestone restarts
 const calculateBatchSize = (totalStocks) => {
   const batchSize = Math.max(1, Math.ceil(totalStocks / 20));
   return batchSize;
 };
 
-// Process a batch of stocks with browser restart between batches
 const processBatchWithRestart = async (
   stocks,
   customConfig,
@@ -505,19 +589,45 @@ const processBatchWithRestart = async (
   });
 
   const progressTracker = { completed: startOffset, total: totalStocks };
+  
+  const stocksPerBrowser = Math.ceil(stocks.length / browserCount);
+  const estimatedBatchTimeout = (stocksPerBrowser * STOCK_TIMEOUT_MS) + BATCH_TIMEOUT_BUFFER_MS;
 
   const workerPromises = browserQueues
     .map((queue, browserIdx) => ({ queue, browserIdx }))
     .filter(({ queue }) => queue.length > 0)
-    .map(({ queue, browserIdx }) =>
-      runBrowserWorker(
-        browserIdx,
-        queue,
-        customConfig,
-        progressTracker,
-        browserCount,
-      ),
-    );
+    .map(({ queue, browserIdx }) => {
+      const workerState = {
+        results: [],
+        currentIndex: 0,
+      };
+
+      return withTimeout(
+        runBrowserWorker(
+          browserIdx,
+          queue,
+          customConfig,
+          progressTracker,
+          browserCount,
+          workerState,
+        ),
+        estimatedBatchTimeout,
+        `Batch timeout (${estimatedBatchTimeout / 1000}s) for browser ${browserIdx + 1}`,
+      ).catch(async (error) => {
+        console.log(
+          `⏱️ Browser ${browserIdx + 1}: ${error.message} — force closing browsers and returning neutral results for this queue`,
+        );
+        await closeAllActiveBrowsers(
+          `Batch ${Math.floor(startOffset / Math.max(stocks.length, 1)) + 1}:`,
+        );
+        const remainingStocks = queue.slice(workerState.currentIndex);
+        const fallbackResults = remainingStocks.map((stock) => ({
+          ...buildNeutralStockResult(stock),
+          comp_name: stock.LONG_NAME,
+        }));
+        return [...workerState.results, ...fallbackResults];
+      });
+    });
 
   const batchResults = await Promise.all(workerPromises);
   const processedBatch = batchResults.flat();
@@ -623,9 +733,9 @@ const main = async (customConfig) => {
       currentOffset = endIdx;
 
       if (batchNum < totalBatches - 1) {
-        console.log(`⏳ Closing all browsers...`);
-        await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
-        activeBrowsers = [];
+        await closeAllActiveBrowsers(
+          `5% milestone reached (${(((batchNum + 1) / totalBatches) * 100).toFixed(1)}%).`,
+        );
         console.log(`⏳ Waiting 5 seconds before starting next batch...`);
         await delay(5000);
         console.log(`✅ Restarting browsers for next batch\n`);
@@ -660,8 +770,7 @@ const main = async (customConfig) => {
     return allBreakouts;
   } catch (error) {
     console.error("Error in main scraping function:", error);
-    await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
-    activeBrowsers = [];
+    await closeAllActiveBrowsers("Main scraper error.");
     throw error;
   }
 };
