@@ -263,12 +263,6 @@ async function switchSymbolViaApiIntercept(page, scripname, baseConfig) {
     }
   }, scripname);
 
-  if (switched) {
-    // Give the chart a moment to start loading the new symbol
-    await new Promise((r) => setTimeout(r, 1000));
-    return true;
-  }
-
   // Fall back to opening the search UI
   await page.waitForSelector(symbolSearchButtonSelector, { timeout: 10000 });
   await page.click(symbolSearchButtonSelector);

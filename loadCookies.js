@@ -5,7 +5,7 @@ puppeteer.use(StealthPlugin());
 
 (async () => {
   const browser = await puppeteer.launch({
-    headless: false,
+    headless: true,
     args: [
       "--start-maximized", // Start the window maximized
     ],
@@ -32,25 +32,25 @@ puppeteer.use(StealthPlugin());
 
   // Click the login button (adjust selector if necessary)
   await page.click(
-    "body > div:nth-of-type(8) > div > div > div:first-of-type > div > div:nth-of-type(2) > div:nth-of-type(2) > div > div > button"
+    "body > div:nth-of-type(8) > div > div > div:first-of-type > div > div:nth-of-type(2) > div:nth-of-type(2) > div > div > button",
   );
 
   // Fill in the login form
   await page.type("#id_username", "s3uqog1", { delay: 100 });
   await page.type("#id_password", "Pradyumna@9", { delay: 100 });
   await page.click(
-    "body > div:nth-of-type(8) > div > div > div:first-of-type > div > div:nth-of-type(2) > div:nth-of-type(2) > div > div > div > form > button"
+    "body > div:nth-of-type(8) > div > div > div:first-of-type > div > div:nth-of-type(2) > div:nth-of-type(2) > div > div > div > form > button",
   );
 
   // Wait for user icon selector to appear after manual CAPTCHA solving
   await page.waitForSelector(
     "body > div:nth-of-type(3) > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(3) > button:nth-of-type(3)",
-    { timeout: 60000 }
+    { timeout: 60000 },
   );
 
   // Check if login was successful
   const userIcon = await page.$(
-    "body > div:nth-of-type(3) > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(3) > button:nth-of-type(3)"
+    "body > div:nth-of-type(3) > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(3) > button:nth-of-type(3)",
   );
   if (userIcon) {
     console.log("Login successful");

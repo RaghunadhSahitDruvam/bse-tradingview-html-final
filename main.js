@@ -133,10 +133,7 @@ const cleanupBrowserSession = async (browser, page) => {
 // Launch a fresh Puppeteer browser
 const launchBrowser = async (headless) => {
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  const forceHeadless =
-    process.env.FORCE_HEADLESS === "true" ||
-    process.env.NODE_ENV === "production" ||
-    !process.env.DISPLAY;
+  const forceHeadless = true;
   const resolvedHeadless = forceHeadless ? true : headless;
 
   if (forceHeadless && headless !== true) {
@@ -485,7 +482,75 @@ const resolveRequestedDate = (dateSelection, customDate) => {
   };
 };
 
-// Main scraping function — orchestrates BSE fetch + 5 parallel browser workers
+// Calculate batch size for 5% milestone restarts
+const calculateBatchSize = (totalStocks) => {
+  const batchSize = Math.max(1, Math.ceil(totalStocks / 20));
+  return batchSize;
+};
+
+// Process a batch of stocks with browser restart between batches
+const processBatchWithRestart = async (
+  stocks,
+  customConfig,
+  browserCount,
+  startOffset,
+  totalStocks,
+  allResults,
+  allBreakouts,
+) => {
+  const browserQueues = Array.from({ length: browserCount }, () => []);
+
+  stocks.forEach((stock, index) => {
+    browserQueues[index % browserCount].push(stock);
+  });
+
+  const progressTracker = { completed: startOffset, total: totalStocks };
+
+  const workerPromises = browserQueues
+    .map((queue, browserIdx) => ({ queue, browserIdx }))
+    .filter(({ queue }) => queue.length > 0)
+    .map(({ queue, browserIdx }) =>
+      runBrowserWorker(
+        browserIdx,
+        queue,
+        customConfig,
+        progressTracker,
+        browserCount,
+      ),
+    );
+
+  const batchResults = await Promise.all(workerPromises);
+  const processedBatch = batchResults.flat();
+
+  const batchBreakouts = processedBatch.filter(
+    (stock) => stock.isBreakout === true,
+  );
+
+  allResults.push(...processedBatch);
+  allBreakouts.push(...batchBreakouts);
+
+  const endProgress = startOffset + stocks.length;
+  const percentComplete = ((endProgress / totalStocks) * 100).toFixed(1);
+
+  console.log(`\n${"═".repeat(65)}`);
+  console.log(
+    `📊 BATCH COMPLETE: ${endProgress}/${totalStocks} stocks (${percentComplete}%)`,
+  );
+  console.log(`   🎯 Breakouts found in this batch: ${batchBreakouts.length}`);
+  if (batchBreakouts.length > 0) {
+    batchBreakouts.forEach((stock) => {
+      console.log(
+        `   🔴 ${stock.scripname} - ${stock.comp_name || stock.LONG_NAME}`,
+      );
+    });
+  }
+  console.log(`   📈 Total breakouts so far: ${allBreakouts.length}`);
+  console.log(`${"═".repeat(65)}\n`);
+
+  return { completed: endProgress };
+};
+
+// Main scraping function — orchestrates BSE fetch + 5% batch processing with browser restarts
 const main = async (customConfig) => {
   try {
     const browserCount = resolveBrowserCount(customConfig.browserCount);
@@ -499,6 +564,7 @@ const main = async (customConfig) => {
         customConfig.selectedDate || customConfig.dateSelection
       }`,
     );
+    console.log(`   🔄 Browser restart: Every 5% of stocks`);
     console.log(`${"═".repeat(65)}\n`);
 
     // ── Phase 1: Fetch BSE stock list ─────────────────────────────────────
@@ -513,66 +579,85 @@ const main = async (customConfig) => {
     }
     console.log(`✅ ${stocks.length} stocks loaded from BSE\n`);
 
-    // ── Phase 2: Distribute stocks across browsers (round-robin by block) ─
+    // ── Phase 2: Process in 5% batches with browser restarts ─────────────
     console.log(`${"─".repeat(65)}`);
-    console.log(
-      `📋 PHASE 2 — Distributing stocks across ${browserCount} browsers`,
-    );
+    console.log(`📋 PHASE 2 — Processing in 5% batches`);
     console.log(`${"─".repeat(65)}`);
 
-    const browserQueues = Array.from({ length: browserCount }, () => []);
+    const batchSize = calculateBatchSize(stocks.length);
+    const totalBatches = Math.ceil(stocks.length / batchSize);
 
-    stocks.forEach((stock, index) => {
-      browserQueues[index % browserCount].push(stock);
-    });
-
-    browserQueues.forEach((queue, idx) => {
-      console.log(`   🌐 Browser ${idx + 1}: ${queue.length} stocks`);
-    });
+    console.log(`   📦 Batch size: ${batchSize} stocks`);
+    console.log(`   📊 Total batches: ${totalBatches}`);
+    console.log(`   🌐 Browsers per batch: ${browserCount}`);
     console.log("");
 
-    // ── Phase 3: Launch all browser workers in parallel ───────────────────
-    console.log(`${"─".repeat(65)}`);
-    console.log(`⚡ PHASE 3 — Launching ${browserCount} browsers in parallel`);
-    console.log(`${"─".repeat(65)}`);
+    const allResults = [];
+    const allBreakouts = [];
+    let currentOffset = 0;
 
-    const progressTracker = { completed: 0, total: stocks.length };
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      const startIdx = batchNum * batchSize;
+      const endIdx = Math.min(startIdx + batchSize, stocks.length);
+      const batchStocks = stocks.slice(startIdx, endIdx);
 
-    const workerPromises = browserQueues
-      .map((queue, browserIdx) => ({ queue, browserIdx }))
-      .filter(({ queue }) => queue.length > 0)
-      .map(({ queue, browserIdx }) =>
-        runBrowserWorker(
-          browserIdx,
-          queue,
-          customConfig,
-          progressTracker,
-          browserCount,
-        ),
+      const currentBatch = batchNum + 1;
+      const batchProgress = ((startIdx / stocks.length) * 100).toFixed(1);
+
+      console.log(`${"─".repeat(65)}`);
+      console.log(
+        `🔄 BATCH ${currentBatch}/${totalBatches} — Processing stocks ${startIdx + 1}-${endIdx} (${batchProgress}%)`,
       );
-    const allResults = await Promise.all(workerPromises);
-    const processedData = allResults.flat();
+      console.log(`${"─".repeat(65)}`);
 
-    const finalBreakoutStocks = processedData.filter(
-      (stock) => stock.isBreakout === true,
-    );
+      await processBatchWithRestart(
+        batchStocks,
+        customConfig,
+        browserCount,
+        currentOffset,
+        stocks.length,
+        allResults,
+        allBreakouts,
+      );
+
+      currentOffset = endIdx;
+
+      if (batchNum < totalBatches - 1) {
+        console.log(`⏳ Closing all browsers...`);
+        await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
+        activeBrowsers = [];
+        console.log(`⏳ Waiting 5 seconds before starting next batch...`);
+        await delay(5000);
+        console.log(`✅ Restarting browsers for next batch\n`);
+      }
+    }
 
     console.log(`\n${"═".repeat(65)}`);
     console.log(`🏁 SCRAPING COMPLETE`);
-    console.log(`   ✅ Total stocks processed : ${processedData.length}`);
-    console.log(`   🎯 Breakout stocks found  : ${finalBreakoutStocks.length}`);
+    console.log(`   ✅ Total stocks processed : ${allResults.length}`);
+    console.log(`   🎯 Breakout stocks found  : ${allBreakouts.length}`);
     console.log(`${"═".repeat(65)}\n`);
 
+    if (allBreakouts.length > 0) {
+      console.log(`\n🎯 BREAKOUT STOCKS SUMMARY:`);
+      allBreakouts.forEach((stock, idx) => {
+        console.log(
+          `   ${idx + 1}. ${stock.scripname} - ${stock.comp_name || stock.LONG_NAME}`,
+        );
+      });
+      console.log("");
+    }
+
     // AI Analysis for breakout stocks
-    if (finalBreakoutStocks.length > 0) {
+    if (allBreakouts.length > 0) {
       console.log(
-        `\n🤖 Starting AI analysis for ${finalBreakoutStocks.length} breakout stocks...`,
+        `\n🤖 Starting AI analysis for ${allBreakouts.length} breakout stocks...`,
       );
-      const analyzedStocks = await analyzeBreakoutStocks(finalBreakoutStocks);
+      const analyzedStocks = await analyzeBreakoutStocks(allBreakouts);
       return analyzedStocks;
     }
 
-    return finalBreakoutStocks;
+    return allBreakouts;
   } catch (error) {
     console.error("Error in main scraping function:", error);
     await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
