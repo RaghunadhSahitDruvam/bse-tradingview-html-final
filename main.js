@@ -164,7 +164,7 @@ const launchBrowser = async (headless) => {
   const headlessMode = resolvedHeadless === true ? "new" : resolvedHeadless;
 
   return puppeteer.launch({
-    headless: headlessMode,
+    headless: true,
     ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
@@ -402,7 +402,7 @@ const runBrowserWorker = async (
             reuseSymbolSearch: currentIndex > 0,
             openDataWindow: currentIndex === 0,
           };
-          
+
           const liveBreakout = await withTimeout(
             fetch_tv_data(
               page,
@@ -430,14 +430,16 @@ const runBrowserWorker = async (
           }
         } catch (error) {
           const errorMessage = error.message || error.toString();
-          
+
           if (errorMessage.includes("Stock processing timeout")) {
             console.log(
               `⏱️ Browser ${browserIdx + 1}: TIMEOUT for ${scripname} — skipping and restarting browser`,
             );
-            throw new Error(`Stock timeout triggered browser restart: ${scripname}`);
+            throw new Error(
+              `Stock timeout triggered browser restart: ${scripname}`,
+            );
           }
-          
+
           if (isRecoverableBrowserError(error)) {
             throw error;
           }
@@ -539,9 +541,26 @@ const isValidYmdDate = (value) => {
   );
 };
 
-const resolveRequestedDate = (dateSelection, customDate) => {
+const resolveRequestedDate = (dateSelection, customDate, fromDate, toDate) => {
   const today = new Date();
   const selectedDate = new Date(today);
+
+  if (dateSelection === "range") {
+    if (!isValidYmdDate(fromDate) || !isValidYmdDate(toDate)) {
+      throw new Error("A valid fromDate and toDate are required in YYYY-MM-DD format.");
+    }
+    const fromDateObj = new Date(`${fromDate}T00:00:00`);
+    const toDateObj = new Date(`${toDate}T00:00:00`);
+    if (fromDateObj > toDateObj) {
+      throw new Error("fromDate must be before or equal to toDate.");
+    }
+    return {
+      dateSelection: "range",
+      selectedDate: fromDate,
+      fromDate,
+      toDate,
+    };
+  }
 
   if (dateSelection === "custom") {
     if (!isValidYmdDate(customDate)) {
@@ -589,9 +608,10 @@ const processBatchWithRestart = async (
   });
 
   const progressTracker = { completed: startOffset, total: totalStocks };
-  
+
   const stocksPerBrowser = Math.ceil(stocks.length / browserCount);
-  const estimatedBatchTimeout = (stocksPerBrowser * STOCK_TIMEOUT_MS) + BATCH_TIMEOUT_BUFFER_MS;
+  const estimatedBatchTimeout =
+    stocksPerBrowser * STOCK_TIMEOUT_MS + BATCH_TIMEOUT_BUFFER_MS;
 
   const workerPromises = browserQueues
     .map((queue, browserIdx) => ({ queue, browserIdx }))
@@ -1012,11 +1032,13 @@ app.post("/api/run-scraper", async (req, res) => {
       browserCount,
       dateSelection,
       customDate,
+      fromDate,
+      toDate,
       headless,
       liveMode,
     } = req.body;
 
-    const resolvedDate = resolveRequestedDate(dateSelection, customDate);
+    const resolvedDate = resolveRequestedDate(dateSelection, customDate, fromDate, toDate);
     const resolvedBrowserCount = resolveBrowserCount(browserCount ?? batchSize);
 
     // Handle "all" mode - run all indicators and all timeframes
@@ -1026,6 +1048,8 @@ app.post("/api/run-scraper", async (req, res) => {
         browserCount: resolvedBrowserCount,
         dateSelection: resolvedDate.dateSelection,
         selectedDate: resolvedDate.selectedDate,
+        fromDate: resolvedDate.fromDate || null,
+        toDate: resolvedDate.toDate || null,
         headless: Boolean(headless),
         LIVE_MODE: Boolean(liveMode),
       };
@@ -1045,6 +1069,8 @@ app.post("/api/run-scraper", async (req, res) => {
       browserCount: resolvedBrowserCount,
       dateSelection: resolvedDate.dateSelection,
       selectedDate: resolvedDate.selectedDate,
+      fromDate: resolvedDate.fromDate || null,
+      toDate: resolvedDate.toDate || null,
       headless: Boolean(headless),
       LIVE_MODE: Boolean(liveMode),
     };

@@ -168,6 +168,17 @@ function resolveSelectedDate(dateSelection, selectedDate) {
   return toYmdLocal(today);
 }
 
+/**
+ * Check if a given indicator date falls within the specified date range [fromDate, toDate].
+ * Both dates should be Date objects at local midnight.
+ */
+function isDateInRange(indicatorDate, fromDateStr, toDateStr) {
+  const fromObj = ymdToLocalMidnight(fromDateStr);
+  const toObj = ymdToLocalMidnight(toDateStr);
+  if (!indicatorDate || !fromObj || !toObj) return false;
+  return indicatorDate >= fromObj && indicatorDate <= toObj;
+}
+
 async function prepareTradingViewPage(page) {
   if (page.__tvPrepared) {
     return;
@@ -449,6 +460,8 @@ const fetch_tv_data = async (
     baseConfig,
     LIVE_MODE,
     selectedDate,
+    fromDate,
+    toDate,
     reuseSymbolSearch,
     openDataWindow,
   } = scrapingConfig;
@@ -575,6 +588,13 @@ const fetch_tv_data = async (
             `⚠️  Could not parse indicator timestamp: "${timestampText}" - Using selected date: ${effectiveSelectedDate}`,
           );
           isBreakout = ltradert > value;
+        } else if (fromDate && toDate) {
+          // Date Range mode: check if indicator date falls within [fromDate, toDate]
+          const isInRange = isDateInRange(indicatorDate, fromDate, toDate);
+          console.log(
+            `TrendLines Date Range Check: indicatorDate=${indicatorDateStr}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isInRange}`,
+          );
+          isBreakout = ltradert > value && isInRange;
         } else {
           console.log(
             indicatorDateStr,
@@ -587,22 +607,9 @@ const fetch_tv_data = async (
             indicatorDateStr === effectiveSelectedDate;
         }
       } else if (indicatorName === "Volumetric-Ulgo") {
-        const selectedDateObj = ymdToLocalMidnight(effectiveSelectedDate);
         let isCurrentDateInRange = false;
-        let twoDaysLater = null;
 
-        if (indicatorDate && selectedDateObj) {
-          // Create the end of the date range without modifying the original indicatorDate.
-          twoDaysLater = new Date(indicatorDate);
-          // Add 7 days to the copy.
-          twoDaysLater.setDate(twoDaysLater.getDate() + 7);
-
-          // Perform the date range check using only Date objects.
-          isCurrentDateInRange =
-            selectedDateObj >= indicatorDate && selectedDateObj <= twoDaysLater;
-        }
-
-        if (!indicatorDate || !selectedDateObj) {
+        if (!indicatorDate) {
           // If timestamp couldn't be parsed, assume the indicator is from today
           // This handles cases where the selector returns numeric data instead of dates
           console.log(
@@ -611,7 +618,28 @@ const fetch_tv_data = async (
           // When we can't parse the timestamp, we assume the indicator is current
           // and check if the price condition is met
           isCurrentDateInRange = true;
+        } else if (fromDate && toDate) {
+          // Date Range mode: check if indicator date falls within [fromDate, toDate]
+          isCurrentDateInRange = isDateInRange(indicatorDate, fromDate, toDate);
+          console.log(
+            `Volumetric Date Range Check: indicatorDate=${indicatorDate ? toYmdLocal(indicatorDate) : "null"}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isCurrentDateInRange}`,
+          );
         } else {
+          // Single date mode: check if selected date is within 7 days after the indicator date
+          const selectedDateObj = ymdToLocalMidnight(effectiveSelectedDate);
+          let twoDaysLater = null;
+
+          if (indicatorDate && selectedDateObj) {
+            // Create the end of the date range without modifying the original indicatorDate.
+            twoDaysLater = new Date(indicatorDate);
+            // Add 7 days to the copy.
+            twoDaysLater.setDate(twoDaysLater.getDate() + 7);
+
+            // Perform the date range check using only Date objects.
+            isCurrentDateInRange =
+              selectedDateObj >= indicatorDate && selectedDateObj <= twoDaysLater;
+          }
+
           console.log(
             selectedDateObj,
             indicatorDate,
@@ -620,11 +648,8 @@ const fetch_tv_data = async (
           );
         }
 
-        let percent = LIVE_MODE ? 0.05 : 0.08;
-        const upperBound = value * percent + value;
-
         isBreakout =
-          ltradert > value && ltradert <= upperBound && isCurrentDateInRange;
+          ltradert > value && isCurrentDateInRange;
       }
     } catch (error) {
       console.log(

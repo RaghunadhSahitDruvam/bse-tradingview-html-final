@@ -35,15 +35,15 @@ const config = {
   indicators: {
     TrendLines: {
       selector:
-        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(12) > div:nth-of-type(2) > span",
+        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(14) > div:nth-of-type(2) > span",
       timeStampSelector:
         "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(16) > div:nth-of-type(2) > span",
     },
     "Volumetric-Ulgo": {
       selector:
-        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(6) > div:nth-of-type(2) > span",
+        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(29) > div:nth-of-type(2) > span",
       timeStampSelector:
-        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(5) > div:nth-of-type(2) > span",
+        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(28) > div:nth-of-type(2) > span",
     },
   },
 };

@@ -225,6 +225,37 @@
         cursor: not-allowed;
       }
 
+      .preset-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .preset-btn {
+        padding: 6px 14px;
+        border: 2px solid #667eea;
+        background: white;
+        color: #667eea;
+        border-radius: 8px;
+        font-size: 0.85em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .preset-btn:hover {
+        background: #667eea;
+        color: white;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+      }
+
+      .preset-btn.active {
+        background: #667eea;
+        color: white;
+      }
+
       .run-button {
         width: 100%;
         padding: 16px;
@@ -415,7 +446,7 @@
     <div class="container">
       <h1>📈 Stock Scraper</h1>
 
-      <div class="config-summary" id="configSummary">
+        <div class="config-summary" id="configSummary">
         <h4>Current Configuration</h4>
         <div class="config-item">
           <span>Timeframe:</span>
@@ -434,6 +465,10 @@
           <span class="config-value" id="summaryDateSelection"
             >Today's Date</span
           >
+        </div>
+        <div class="config-item" id="summaryDateRangeRow" style="display: none;">
+          <span>Date Range:</span>
+          <span class="config-value" id="summaryDateRange">-</span>
         </div>
         <div class="config-item">
           <span>Mode:</span>
@@ -545,6 +580,42 @@
           <div class="custom-date-input">
             <input type="date" id="customDate" name="customDate" disabled />
           </div>
+          <div class="radio-group">
+            <div class="radio-wrapper">
+              <input
+                type="radio"
+                id="dateRangeOption"
+                name="dateSelection"
+                value="range"
+              />
+              <span class="radio-mark"></span>
+            </div>
+            <label for="dateRangeOption" class="radio-label"
+              >Date Range (From - To)</label
+            >
+          </div>
+          <div class="custom-date-input" id="dateRangeInputs" style="display: none;">
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.9em; color: #666; margin-bottom: 6px; display: block;">Quick Presets:</label>
+              <div class="preset-buttons">
+                <button type="button" class="preset-btn" data-days="3">3 Days</button>
+                <button type="button" class="preset-btn" data-days="7">1 Week</button>
+                <button type="button" class="preset-btn" data-days="15">15 Days</button>
+                <button type="button" class="preset-btn" data-days="20">20 Days</button>
+                <button type="button" class="preset-btn" data-days="30">30 Days</button>
+                <button type="button" class="preset-btn" data-days="45">45 Days</button>
+                <button type="button" class="preset-btn" data-days="60">60 Days</button>
+              </div>
+            </div>
+            <div style="margin-bottom: 8px;">
+              <label for="fromDate" style="font-size: 0.9em; color: #666; margin-bottom: 4px; display: block;">From Date:</label>
+              <input type="date" id="fromDate" name="fromDate" disabled />
+            </div>
+            <div>
+              <label for="toDate" style="font-size: 0.9em; color: #666; margin-bottom: 4px; display: block;">To Date:</label>
+              <input type="date" id="toDate" name="toDate" disabled />
+            </div>
+          </div>
         </div>
 
         <div class="form-group">
@@ -613,10 +684,26 @@
           'input[name="dateSelection"]:checked',
         )?.value;
         const customDateInput = document.getElementById("customDate");
+        const dateRangeInputs = document.getElementById("dateRangeInputs");
+        const fromDateInput = document.getElementById("fromDate");
+        const toDateInput = document.getElementById("toDate");
         const isCustomDate = selectedDateOption === "custom";
+        const isDateRange = selectedDateOption === "range";
 
         customDateInput.disabled = !isCustomDate;
         customDateInput.required = isCustomDate;
+
+        if (dateRangeInputs) {
+          dateRangeInputs.style.display = isDateRange ? "block" : "none";
+        }
+        if (fromDateInput) {
+          fromDateInput.disabled = !isDateRange;
+          fromDateInput.required = isDateRange;
+        }
+        if (toDateInput) {
+          toDateInput.disabled = !isDateRange;
+          toDateInput.required = isDateRange;
+        }
 
         if (!isCustomDate) {
           customDateInput.setCustomValidity("");
@@ -632,6 +719,8 @@
           'input[name="dateSelection"]:checked',
         ).value;
         const customDate = document.getElementById("customDate").value;
+        const fromDate = document.getElementById("fromDate").value;
+        const toDate = document.getElementById("toDate").value;
         const liveMode = document.getElementById("liveMode").checked;
 
         const timeframeMap = {
@@ -657,6 +746,7 @@
           custom: customDate
             ? `Custom Date (${formatDateLabel(customDate)})`
             : "Custom Date",
+          range: "Date Range",
         };
 
         document.getElementById("summaryTimeframe").textContent =
@@ -669,6 +759,18 @@
         document.getElementById("summaryMode").textContent = liveMode
           ? "Live Mode"
           : "File Mode";
+
+        // Show/hide date range summary
+        const dateRangeRow = document.getElementById("summaryDateRangeRow");
+        const dateRangeSummary = document.getElementById("summaryDateRange");
+        if (dateSelection === "range") {
+          dateRangeRow.style.display = "flex";
+          dateRangeSummary.textContent = fromDate && toDate
+            ? `${formatDateLabel(fromDate)} - ${formatDateLabel(toDate)}`
+            : "Select dates";
+        } else {
+          dateRangeRow.style.display = "none";
+        }
       }
 
       // Auto-switch indicator when "All Indicators - All Timelines" is selected
@@ -695,6 +797,58 @@
 
       document.getElementById("customDate").addEventListener("change", () => {
         updateConfigSummary();
+      });
+
+      document.getElementById("fromDate").addEventListener("change", () => {
+        updateConfigSummary();
+      });
+
+      document.getElementById("toDate").addEventListener("change", () => {
+        updateConfigSummary();
+      });
+
+      // Preset buttons logic
+      function applyDatePreset(days) {
+        const toDateInput = document.getElementById("toDate");
+        const fromDateInput = document.getElementById("fromDate");
+        const rangeRadio = document.getElementById("dateRangeOption");
+
+        // Auto-select the range radio button
+        rangeRadio.checked = true;
+        syncCustomDateState();
+
+        // Calculate dates
+        const today = new Date();
+        const toDate = new Date(today);
+        const fromDate = new Date(today);
+        fromDate.setDate(fromDate.getDate() - days);
+
+        // Format as YYYY-MM-DD
+        const formatDate = (date) => {
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, "0");
+          const day = String(date.getDate()).padStart(2, "0");
+          return `${year}-${month}-${day}`;
+        };
+
+        toDateInput.value = formatDate(toDate);
+        fromDateInput.value = formatDate(fromDate);
+
+        // Highlight active preset button
+        document.querySelectorAll(".preset-btn").forEach((btn) => {
+          btn.classList.remove("active");
+        });
+        const activeBtn = document.querySelector(`.preset-btn[data-days="${days}"]`);
+        if (activeBtn) activeBtn.classList.add("active");
+
+        updateConfigSummary();
+      }
+
+      document.querySelectorAll(".preset-btn").forEach((btn) => {
+        btn.addEventListener("click", function () {
+          const days = parseInt(this.getAttribute("data-days"), 10);
+          applyDatePreset(days);
+        });
       });
 
       // Show status message
@@ -856,6 +1010,8 @@
           const formData = new FormData(e.target);
           const customDate = formData.get("customDate");
           const dateSelection = formData.get("dateSelection");
+          const fromDate = formData.get("fromDate");
+          const toDate = formData.get("toDate");
 
           if (dateSelection === "custom" && !customDate) {
             document
@@ -863,6 +1019,17 @@
               .setCustomValidity("Please select a custom date.");
             document.getElementById("customDate").reportValidity();
             return;
+          }
+
+          if (dateSelection === "range") {
+            if (!fromDate || !toDate) {
+              showStatus("❌ Please select both From Date and To Date.", "error");
+              return;
+            }
+            if (new Date(fromDate) > new Date(toDate)) {
+              showStatus("❌ From Date must be before or equal to To Date.", "error");
+              return;
+            }
           }
 
           document.getElementById("customDate").setCustomValidity("");
@@ -873,6 +1040,8 @@
             batchSize: parseInt(formData.get("batchSize")),
             dateSelection,
             customDate,
+            fromDate,
+            toDate,
             headless: formData.get("headless") === "on",
             liveMode: formData.get("liveMode") === "on",
           };
@@ -973,6 +1142,8 @@
 
       // Initialize
       document.getElementById("customDate").max = getLocalToday();
+      document.getElementById("fromDate").max = getLocalToday();
+      document.getElementById("toDate").max = getLocalToday();
       syncCustomDateState();
       updateConfigSummary();
     </script>
