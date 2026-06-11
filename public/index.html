@@ -446,7 +446,7 @@
     <div class="container">
       <h1>📈 Stock Scraper</h1>
 
-        <div class="config-summary" id="configSummary">
+      <div class="config-summary" id="configSummary">
         <h4>Current Configuration</h4>
         <div class="config-item">
           <span>Timeframe:</span>
@@ -466,7 +466,7 @@
             >Today's Date</span
           >
         </div>
-        <div class="config-item" id="summaryDateRangeRow" style="display: none;">
+        <div class="config-item" id="summaryDateRangeRow" style="display: none">
           <span>Date Range:</span>
           <span class="config-value" id="summaryDateRange">-</span>
         </div>
@@ -503,21 +503,26 @@
 
         <div class="form-group">
           <label for="batchSize">Parallel Browsers:</label>
-            <input
-              type="number"
-              id="batchSize"
-              name="batchSize"
-              value="5"
-              min="1"
-              max="20"
-            />
-            <div
-              style="margin-top: 8px; color: #667085; font-size: 0.9em; line-height: 1.4"
-            >
-              Enter how many browsers should run at the same time. For example,
-              <strong>5</strong> launches 5 parallel browsers and splits stocks
-              across them.
-            </div>
+          <input
+            type="number"
+            id="batchSize"
+            name="batchSize"
+            value="5"
+            min="1"
+            max="20"
+          />
+          <div
+            style="
+              margin-top: 8px;
+              color: #667085;
+              font-size: 0.9em;
+              line-height: 1.4;
+            "
+          >
+            Enter how many browsers should run at the same time. For example,
+            <strong>5</strong> launches 5 parallel browsers and splits stocks
+            across them.
+          </div>
         </div>
 
         <div class="form-group">
@@ -595,25 +600,69 @@
               >Date Range (From - To)</label
             >
           </div>
-          <div class="custom-date-input" id="dateRangeInputs" style="display: none;">
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.9em; color: #666; margin-bottom: 6px; display: block;">Quick Presets:</label>
+          <div
+            class="custom-date-input"
+            id="dateRangeInputs"
+            style="display: none"
+          >
+            <div style="margin-bottom: 12px">
+              <label
+                style="
+                  font-size: 0.9em;
+                  color: #666;
+                  margin-bottom: 6px;
+                  display: block;
+                "
+                >Quick Presets:</label
+              >
               <div class="preset-buttons">
-                <button type="button" class="preset-btn" data-days="3">3 Days</button>
-                <button type="button" class="preset-btn" data-days="7">1 Week</button>
-                <button type="button" class="preset-btn" data-days="15">15 Days</button>
-                <button type="button" class="preset-btn" data-days="20">20 Days</button>
-                <button type="button" class="preset-btn" data-days="30">30 Days</button>
-                <button type="button" class="preset-btn" data-days="45">45 Days</button>
-                <button type="button" class="preset-btn" data-days="60">60 Days</button>
+                <button type="button" class="preset-btn" data-days="3">
+                  3 Days
+                </button>
+                <button type="button" class="preset-btn" data-days="7">
+                  1 Week
+                </button>
+                <button type="button" class="preset-btn" data-days="15">
+                  15 Days
+                </button>
+                <button type="button" class="preset-btn" data-days="20">
+                  20 Days
+                </button>
+                <button type="button" class="preset-btn" data-days="30">
+                  30 Days
+                </button>
+                <button type="button" class="preset-btn" data-days="45">
+                  45 Days
+                </button>
+                <button type="button" class="preset-btn" data-days="60">
+                  60 Days
+                </button>
               </div>
             </div>
-            <div style="margin-bottom: 8px;">
-              <label for="fromDate" style="font-size: 0.9em; color: #666; margin-bottom: 4px; display: block;">From Date:</label>
+            <div style="margin-bottom: 8px">
+              <label
+                for="fromDate"
+                style="
+                  font-size: 0.9em;
+                  color: #666;
+                  margin-bottom: 4px;
+                  display: block;
+                "
+                >From Date:</label
+              >
               <input type="date" id="fromDate" name="fromDate" disabled />
             </div>
             <div>
-              <label for="toDate" style="font-size: 0.9em; color: #666; margin-bottom: 4px; display: block;">To Date:</label>
+              <label
+                for="toDate"
+                style="
+                  font-size: 0.9em;
+                  color: #666;
+                  margin-bottom: 4px;
+                  display: block;
+                "
+                >To Date:</label
+              >
               <input type="date" id="toDate" name="toDate" disabled />
             </div>
           </div>
@@ -755,7 +804,8 @@
           timeframeMap[timeframe] || timeframe;
         document.getElementById("summaryIndicator").textContent =
           indicatorMap[indicator] || indicator;
-         document.getElementById("summaryBatchSize").textContent = `${batchSize} browser${batchSize === "1" ? "" : "s"}`;
+        document.getElementById("summaryBatchSize").textContent =
+          `${batchSize} browser${batchSize === "1" ? "" : "s"}`;
         document.getElementById("summaryDateSelection").textContent =
           dateSelectionMap[dateSelection] || dateSelection;
         document.getElementById("summaryMode").textContent = liveMode
@@ -767,9 +817,10 @@
         const dateRangeSummary = document.getElementById("summaryDateRange");
         if (dateSelection === "range") {
           dateRangeRow.style.display = "flex";
-          dateRangeSummary.textContent = fromDate && toDate
-            ? `${formatDateLabel(fromDate)} - ${formatDateLabel(toDate)}`
-            : "Select dates";
+          dateRangeSummary.textContent =
+            fromDate && toDate
+              ? `${formatDateLabel(fromDate)} - ${formatDateLabel(toDate)}`
+              : "Select dates";
         } else {
           dateRangeRow.style.display = "none";
         }
@@ -840,7 +891,9 @@
         document.querySelectorAll(".preset-btn").forEach((btn) => {
           btn.classList.remove("active");
         });
-        const activeBtn = document.querySelector(`.preset-btn[data-days="${days}"]`);
+        const activeBtn = document.querySelector(
+          `.preset-btn[data-days="${days}"]`,
+        );
         if (activeBtn) activeBtn.classList.add("active");
 
         updateConfigSummary();
@@ -1025,11 +1078,17 @@
 
           if (dateSelection === "range") {
             if (!fromDate || !toDate) {
-              showStatus("❌ Please select both From Date and To Date.", "error");
+              showStatus(
+                "❌ Please select both From Date and To Date.",
+                "error",
+              );
               return;
             }
             if (new Date(fromDate) > new Date(toDate)) {
-              showStatus("❌ From Date must be before or equal to To Date.", "error");
+              showStatus(
+                "❌ From Date must be before or equal to To Date.",
+                "error",
+              );
               return;
             }
           }
@@ -1061,7 +1120,7 @@
                   "success",
                 );
                 // Start fetching live stocks every 30 seconds
-                liveInterval = setInterval(fetchLiveStocks, 30000);
+                liveInterval = setInterval(fetchLiveStocks, 15000);
                 fetchLiveStocks(); // Fetch immediately
               } else {
                 showStatus(

@@ -155,17 +155,30 @@ function ymdToLocalMidnight(ymdStr) {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
+/**
+ * Resolve the effective single date (YYYY-MM-DD) based on the user's date selection.
+ *
+ * Modes:
+ *   - "today"     : uses today's local date
+ *   - "yesterday" : uses yesterday's local date
+ *   - "custom"    : uses the caller-provided selectedDate
+ *   - "range"     : uses the caller-provided selectedDate (typically fromDate)
+ *
+ * If a valid selectedDate is provided it is returned directly; otherwise we
+ * compute from the mode. This is intentionally simple — main.js already sets the
+ * correct selectedDate for each mode.
+ */
 function resolveSelectedDate(dateSelection, selectedDate) {
-  if (ymdToLocalMidnight(selectedDate)) {
+  const resolved = ymdToLocalMidnight(selectedDate);
+  if (resolved) {
     return selectedDate;
   }
 
-  const today = new Date();
+  const targetDate = new Date();
   if (dateSelection === "yesterday") {
-    today.setDate(today.getDate() - 1);
+    targetDate.setDate(targetDate.getDate() - 1);
   }
-
-  return toYmdLocal(today);
+  return toYmdLocal(targetDate);
 }
 
 /**
@@ -177,6 +190,63 @@ function isDateInRange(indicatorDate, fromDateStr, toDateStr) {
   const toObj = ymdToLocalMidnight(toDateStr);
   if (!indicatorDate || !fromObj || !toObj) return false;
   return indicatorDate >= fromObj && indicatorDate <= toObj;
+}
+
+/**
+ * Validate whether an indicator's timestamp satisfies the user's date selection criteria.
+ *
+ * @param {Date|null} indicatorDate       - Parsed indicator date (from parseTvTimestampToLocalMidnight)
+ * @param {string}    timestampText      - Raw timestamp text from the page (for logging)
+ * @param {string}    dateSelection       - User mode: "today", "yesterday", "custom", "range"
+ * @param {string}    effectiveSelectedDate - Resolved single date (YYYY-MM-DD)
+ * @param {string|null} fromDate          - Range start date (only for range mode)
+ * @param {string|null} toDate            - Range end date (only for range mode)
+ * @returns {{isValid: boolean, indicatorDateStr: string, logMessage: string}}
+ */
+function validateIndicatorDate(
+  indicatorDate,
+  timestampText,
+  dateSelection,
+  effectiveSelectedDate,
+  fromDate,
+  toDate,
+) {
+  const indicatorDateStr = indicatorDate ? toYmdLocal(indicatorDate) : "";
+
+  // Unparseable timestamp — we cannot verify the date
+  if (!indicatorDate) {
+    return {
+      isValid: false,
+      indicatorDateStr: "",
+      logMessage: `⚠️  Could not parse indicator timestamp: "${timestampText}" — Date validation skipped`,
+    };
+  }
+
+  // Explicitly handle range mode: indicator date must lie within [fromDate, toDate]
+  if (dateSelection === "range") {
+    if (fromDate && toDate) {
+      const inRange = isDateInRange(indicatorDate, fromDate, toDate);
+      return {
+        isValid: inRange,
+        indicatorDateStr,
+        logMessage: `Date Range Check: indicatorDate=${indicatorDateStr}, fromDate=${fromDate}, toDate=${toDate}, inRange=${inRange}`,
+      };
+    }
+    // Range mode missing from/to dates — treat as invalid
+    return {
+      isValid: false,
+      indicatorDateStr,
+      logMessage: `⚠️  Range mode missing dates — treating as invalid`,
+    };
+  }
+
+  // Single-date mode (today / yesterday / custom): exact match required
+  const isMatch = indicatorDateStr === effectiveSelectedDate;
+  return {
+    isValid: isMatch,
+    indicatorDateStr,
+    logMessage: `Single Date Check: indicatorDate=${indicatorDateStr}, selectedDate=${effectiveSelectedDate}, match=${isMatch} (mode: ${dateSelection})`,
+  };
 }
 
 async function prepareTradingViewPage(page) {
@@ -328,16 +398,16 @@ async function switchSymbolViaUiFallback(page, scripname, baseConfig) {
         res.url().includes("symbol_search") ||
         res.url().includes("search?text=") ||
         res.url().includes("/search?query="),
-      { timeout: 30000 },
+      { timeout: 15000 },
     )
     .then(() => {
       searchXhrDone = true;
     })
     .catch(() => {});
 
-  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 30000 });
+  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 15000 });
   await page.click(symbolSearchButtonSelector);
-  await page.waitForSelector(symbolSearchInputSelector, { timeout: 30000 });
+  await page.waitForSelector(symbolSearchInputSelector, { timeout: 15000 });
 
   // Reliable field clear
   await page.click(symbolSearchInputSelector);
@@ -351,7 +421,7 @@ async function switchSymbolViaUiFallback(page, scripname, baseConfig) {
 
   // Wait up to 30 seconds total for results to appear
   let resultsLoaded = false;
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 15000;
 
   while (Date.now() < deadline && !resultsLoaded) {
     try {
@@ -457,6 +527,22 @@ async function safeClosePage(page, shouldReusePage) {
   }
 }
 
+async function closeModalIfPresent(page) {
+  const modalCloseSelector =
+    "body > div:nth-of-type(6) > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div:first-of-type > div > div:first-of-type > button";
+  try {
+    const closeButton = await page.$(modalCloseSelector);
+    if (closeButton) {
+      console.log("🪟 Modal popup detected. Closing it...");
+      await closeButton.click();
+      // Brief wait for the modal to disappear
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  } catch (_) {
+    // Modal not present or already closed — ignore
+  }
+}
+
 const fetch_tv_data = async (
   pageOrBrowser,
   scripname,
@@ -520,7 +606,7 @@ const fetch_tv_data = async (
       } else {
         await page.goto(
           `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
-          { waitUntil: "domcontentloaded", timeout: 30000 },
+          { waitUntil: "domcontentloaded", timeout: 15000 },
         );
       }
     } catch (navigationError) {
@@ -560,15 +646,18 @@ const fetch_tv_data = async (
         throw new Error("Page was closed after navigation");
       }
       const valueSelector = indicatorSelectors.selector;
-      await waitForChartToSettle(page, canvasSelector, valueSelector, 30000);
+      await waitForChartToSettle(page, canvasSelector, valueSelector, 15000);
 
       if (openDataWindow && !page.isClosed()) {
         await page.keyboard.down("Alt");
         await page.keyboard.press("KeyD");
         await page.keyboard.up("Alt");
 
-        await page.waitForSelector(valueSelector, { timeout: 30000 });
+        await page.waitForSelector(valueSelector, { timeout: 15000 });
       }
+
+      // Close any modal popup that might appear after loading the chart
+      await closeModalIfPresent(page);
     } catch (error) {
       const errorMessage = error.message || error.toString();
       if (
@@ -608,7 +697,7 @@ const fetch_tv_data = async (
       const timestampSelector = indicatorSelectors.timeStampSelector;
 
       // Extract trendline value and timestamp
-      await page.waitForSelector(valueSelector, { timeout: 30000 });
+      await page.waitForSelector(valueSelector, { timeout: 15000 });
       const valueText = await page.$eval(valueSelector, (element) =>
         element.textContent.trim(),
       );
@@ -627,72 +716,18 @@ const fetch_tv_data = async (
       // Calculate breakout condition
       value = parseFloat(valueText);
 
-      if (indicatorName === "TrendLines") {
-        const indicatorDateStr = indicatorDate ? toYmdLocal(indicatorDate) : "";
-        if (!indicatorDate) {
-          // If timestamp couldn't be parsed, use the selected date as fallback
-          // This handles cases where the selector returns numeric data instead of dates
-          console.log(
-            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Using selected date: ${effectiveSelectedDate}`,
-          );
-          isBreakout = ltradert > value;
-        } else if (fromDate && toDate) {
-          // Date Range mode: check if indicator date falls within [fromDate, toDate]
-          const isInRange = isDateInRange(indicatorDate, fromDate, toDate);
-          console.log(
-            `TrendLines Date Range Check: indicatorDate=${indicatorDateStr}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isInRange}`,
-          );
-          isBreakout = ltradert > value && isInRange;
-        } else {
-          console.log(
-            indicatorDateStr,
-            effectiveSelectedDate,
-            `(Using ${dateSelection})`,
-          );
-          isBreakout =
-            !!indicatorDate &&
-            ltradert > value &&
-            indicatorDateStr === effectiveSelectedDate;
-        }
-      } else if (
-        indicatorName === "Volumetric-Ulgo" ||
-        indicatorName === "Order-Block"
-      ) {
-        let isCurrentDateInRange = false;
+      const dateValidation = validateIndicatorDate(
+        indicatorDate,
+        timestampText,
+        dateSelection,
+        effectiveSelectedDate,
+        fromDate,
+        toDate,
+      );
 
-        if (!indicatorDate) {
-          // Fallback: if the indicator timestamp can't be parsed, treat it as current
-          console.log(
-            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Assuming indicator is current`,
-          );
-          isCurrentDateInRange = true;
-        } else if (fromDate && toDate) {
-          // Date Range mode (From–To)
-          isCurrentDateInRange = isDateInRange(indicatorDate, fromDate, toDate);
-          console.log(
-            `${indicatorName} Date Range Check: indicatorDate=${toYmdLocal(indicatorDate)}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isCurrentDateInRange}`,
-          );
-        } else {
-          // Single date mode (today / yesterday / custom): allow a 7-day window
-          // from the indicator date up to the selected date
-          const selectedDateObj = ymdToLocalMidnight(effectiveSelectedDate);
-          if (indicatorDate && selectedDateObj) {
-            const windowEnd = new Date(indicatorDate);
-            windowEnd.setDate(windowEnd.getDate() + 7);
-            isCurrentDateInRange =
-              selectedDateObj >= indicatorDate && selectedDateObj <= windowEnd;
-          }
+      console.log(`${indicatorName} ${dateValidation.logMessage}`);
 
-          console.log(
-            selectedDateObj,
-            indicatorDate,
-            windowEnd,
-            `(Using ${dateSelection})`,
-          );
-        }
-
-        isBreakout = ltradert > value && isCurrentDateInRange;
-      }
+      isBreakout = ltradert > value && dateValidation.isValid;
     } catch (error) {
       console.log(
         `Failed to retrieve breakout value for ${scripname} with ${indicatorName}. Setting breakout info to null. Error: ${error.message}`,

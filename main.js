@@ -72,7 +72,7 @@ const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo", "Order-Block"];
 const DEFAULT_BROWSER_COUNT = 1;
 const MAX_BROWSER_COUNT = 20;
 const BROWSER_RETRY_DELAY_MS = 5000;
-const BROWSER_CLOSE_TIMEOUT_MS = 30000;
+const BROWSER_CLOSE_TIMEOUT_MS = 15000;
 
 // Render a simple ASCII progress bar
 const generateProgressBar = (completed, total, width = 25) => {
@@ -194,7 +194,7 @@ const launchBrowser = async (headless) => {
   const headlessMode = resolvedHeadless === true ? "new" : resolvedHeadless;
 
   return puppeteer.launch({
-    headless: false,
+    headless: true,
     ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
@@ -233,7 +233,7 @@ const launchBrowser = async (headless) => {
 
 const fetchBseStocksDirectly = async () => {
   const response = await axios.get(config.targetRequestUrl, {
-    timeout: 30000,
+    timeout: 15000,
     headers: {
       Accept: "application/json, text/plain, */*",
       Referer: config.bseUrl,
@@ -281,9 +281,9 @@ const configureBrowserTimeframe = async (browser, customConfig) => {
   });
 
   const buttonSelector = getButtonSelector(customConfig.timeframe);
-  await page.waitForSelector(buttonSelector, { timeout: 30000 });
+  await page.waitForSelector(buttonSelector, { timeout: 15000 });
   await page.click(buttonSelector);
-  await page.waitForSelector(config.saveButtonSelector, { timeout: 30000 });
+  await page.waitForSelector(config.saveButtonSelector, { timeout: 15000 });
   await page.click(config.saveButtonSelector);
 
   // Wait for a network idle or a confirmation element after saving
