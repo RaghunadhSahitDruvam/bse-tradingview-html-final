@@ -180,28 +180,36 @@ function isDateInRange(indicatorDate, fromDateStr, toDateStr) {
 }
 
 async function prepareTradingViewPage(page) {
-  if (page.__tvPrepared) {
+  if (page.__tvPrepared || page.isClosed()) {
     return;
   }
 
-  await page.setCacheEnabled(true);
-  await page.setRequestInterception(true);
-  page.on("request", (request) => {
-    const resourceType = request.resourceType();
-    const requestUrl = request.url().toLowerCase();
-    const shouldBlock =
-      BLOCKED_RESOURCE_TYPES.has(resourceType) ||
-      BLOCKED_URL_PATTERNS.some((pattern) => requestUrl.includes(pattern));
+  try {
+    await page.setCacheEnabled(true);
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      try {
+        const resourceType = request.resourceType();
+        const requestUrl = request.url().toLowerCase();
+        const shouldBlock =
+          BLOCKED_RESOURCE_TYPES.has(resourceType) ||
+          BLOCKED_URL_PATTERNS.some((pattern) => requestUrl.includes(pattern));
 
-    if (shouldBlock) {
-      request.abort();
-      return;
-    }
+        if (shouldBlock) {
+          request.abort();
+          return;
+        }
 
-    request.continue();
-  });
+        request.continue();
+      } catch (_) {
+        // Page/frame may have been detached mid-request
+      }
+    });
 
-  page.__tvPrepared = true;
+    page.__tvPrepared = true;
+  } catch (error) {
+    console.log(`⚠️  prepareTradingViewPage failed: ${error.message}`);
+  }
 }
 
 async function loadCookiesIfPresent(page) {
@@ -327,9 +335,9 @@ async function switchSymbolViaUiFallback(page, scripname, baseConfig) {
     })
     .catch(() => {});
 
-  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 15000 });
+  await page.waitForSelector(symbolSearchButtonSelector, { timeout: 30000 });
   await page.click(symbolSearchButtonSelector);
-  await page.waitForSelector(symbolSearchInputSelector, { timeout: 15000 });
+  await page.waitForSelector(symbolSearchInputSelector, { timeout: 30000 });
 
   // Reliable field clear
   await page.click(symbolSearchInputSelector);
@@ -439,6 +447,16 @@ async function switchSymbolWithinTradingView(page, scripname, baseConfig) {
  * @param {Object} scrapingConfig - Complete configuration object with all selectors and settings
  * @returns {Object} Trading data including breakout status, value and company name
  */
+async function safeClosePage(page, shouldReusePage) {
+  if (!shouldReusePage && page && !page.isClosed()) {
+    try {
+      await page.close();
+    } catch (_) {
+      // Ignore close errors
+    }
+  }
+}
+
 const fetch_tv_data = async (
   pageOrBrowser,
   scripname,
@@ -448,6 +466,28 @@ const fetch_tv_data = async (
   dateSelection = "today",
 ) => {
   const shouldReusePage = typeof pageOrBrowser?.goto === "function";
+
+  // Defensive: if using a browser, verify it's connected before creating page
+  if (
+    !shouldReusePage &&
+    pageOrBrowser?.isConnected &&
+    !pageOrBrowser.isConnected()
+  ) {
+    console.log(
+      `⚠️  Browser disconnected before fetching ${scripname}. Skipping...`,
+    );
+    return {
+      isBreakout: null,
+      value: null,
+      comp_name: LONG_NAME,
+      current_market_price: parseFloat(ltradert) || 0,
+      trendline_strength: 0,
+      pivot_point_strength: 0,
+      ema_strength: 0,
+      rs_strength: 0,
+    };
+  }
+
   const page = shouldReusePage ? pageOrBrowser : await pageOrBrowser.newPage();
 
   // Extract all configuration values from scrapingConfig
@@ -472,12 +512,15 @@ const fetch_tv_data = async (
   try {
     // Navigate to TradingView chart page with enhanced error handling
     try {
+      if (page.isClosed()) {
+        throw new Error("Page was closed before navigation");
+      }
       if (reuseSymbolSearch) {
         await switchSymbolWithinTradingView(page, scripname, baseConfig);
       } else {
         await page.goto(
           `https://in.tradingview.com/chart/yenE16ib/?symbol=BSE%3A${scripname}`,
-          { waitUntil: "domcontentloaded", timeout: 15000 },
+          { waitUntil: "domcontentloaded", timeout: 30000 },
         );
       }
     } catch (navigationError) {
@@ -499,6 +542,7 @@ const fetch_tv_data = async (
           `⚠️  Failed to navigate to ${scripname}: ${errorMessage}. Skipping...`,
         );
       }
+      await safeClosePage(page, shouldReusePage);
       return {
         isBreakout: null,
         value: null,
@@ -512,15 +556,18 @@ const fetch_tv_data = async (
     }
 
     try {
+      if (page.isClosed()) {
+        throw new Error("Page was closed after navigation");
+      }
       const valueSelector = indicatorSelectors.selector;
-      await waitForChartToSettle(page, canvasSelector, valueSelector, 15000);
+      await waitForChartToSettle(page, canvasSelector, valueSelector, 30000);
 
-      if (openDataWindow) {
+      if (openDataWindow && !page.isClosed()) {
         await page.keyboard.down("Alt");
         await page.keyboard.press("KeyD");
         await page.keyboard.up("Alt");
 
-        await page.waitForSelector(valueSelector, { timeout: 15000 });
+        await page.waitForSelector(valueSelector, { timeout: 30000 });
       }
     } catch (error) {
       const errorMessage = error.message || error.toString();
@@ -539,6 +586,7 @@ const fetch_tv_data = async (
           `⚠️  Failed to find selectors for ${scripname}: ${errorMessage}. Skipping...`,
         );
       }
+      await safeClosePage(page, shouldReusePage);
       return {
         isBreakout: null,
         value: null,
@@ -560,7 +608,7 @@ const fetch_tv_data = async (
       const timestampSelector = indicatorSelectors.timeStampSelector;
 
       // Extract trendline value and timestamp
-      await page.waitForSelector(valueSelector, { timeout: 15000 });
+      await page.waitForSelector(valueSelector, { timeout: 30000 });
       const valueText = await page.$eval(valueSelector, (element) =>
         element.textContent.trim(),
       );
@@ -606,50 +654,44 @@ const fetch_tv_data = async (
             ltradert > value &&
             indicatorDateStr === effectiveSelectedDate;
         }
-      } else if (indicatorName === "Volumetric-Ulgo") {
+      } else if (
+        indicatorName === "Volumetric-Ulgo" ||
+        indicatorName === "Order-Block"
+      ) {
         let isCurrentDateInRange = false;
 
         if (!indicatorDate) {
-          // If timestamp couldn't be parsed, assume the indicator is from today
-          // This handles cases where the selector returns numeric data instead of dates
+          // Fallback: if the indicator timestamp can't be parsed, treat it as current
           console.log(
-            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Assuming indicator is from today`,
+            `⚠️  Could not parse indicator timestamp: "${timestampText}" - Assuming indicator is current`,
           );
-          // When we can't parse the timestamp, we assume the indicator is current
-          // and check if the price condition is met
           isCurrentDateInRange = true;
         } else if (fromDate && toDate) {
-          // Date Range mode: check if indicator date falls within [fromDate, toDate]
+          // Date Range mode (From–To)
           isCurrentDateInRange = isDateInRange(indicatorDate, fromDate, toDate);
           console.log(
-            `Volumetric Date Range Check: indicatorDate=${indicatorDate ? toYmdLocal(indicatorDate) : "null"}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isCurrentDateInRange}`,
+            `${indicatorName} Date Range Check: indicatorDate=${toYmdLocal(indicatorDate)}, fromDate=${fromDate}, toDate=${toDate}, inRange=${isCurrentDateInRange}`,
           );
         } else {
-          // Single date mode: check if selected date is within 7 days after the indicator date
+          // Single date mode (today / yesterday / custom): allow a 7-day window
+          // from the indicator date up to the selected date
           const selectedDateObj = ymdToLocalMidnight(effectiveSelectedDate);
-          let twoDaysLater = null;
-
           if (indicatorDate && selectedDateObj) {
-            // Create the end of the date range without modifying the original indicatorDate.
-            twoDaysLater = new Date(indicatorDate);
-            // Add 7 days to the copy.
-            twoDaysLater.setDate(twoDaysLater.getDate() + 7);
-
-            // Perform the date range check using only Date objects.
+            const windowEnd = new Date(indicatorDate);
+            windowEnd.setDate(windowEnd.getDate() + 7);
             isCurrentDateInRange =
-              selectedDateObj >= indicatorDate && selectedDateObj <= twoDaysLater;
+              selectedDateObj >= indicatorDate && selectedDateObj <= windowEnd;
           }
 
           console.log(
             selectedDateObj,
             indicatorDate,
-            twoDaysLater,
+            windowEnd,
             `(Using ${dateSelection})`,
           );
         }
 
-        isBreakout =
-          ltradert > value && isCurrentDateInRange;
+        isBreakout = ltradert > value && isCurrentDateInRange;
       }
     } catch (error) {
       console.log(
@@ -763,7 +805,7 @@ const fetch_tv_data = async (
     }
 
     if (!shouldReusePage) {
-      await page.close();
+      await safeClosePage(page, shouldReusePage);
     }
 
     const result = {
@@ -810,13 +852,7 @@ const fetch_tv_data = async (
       );
     }
 
-    if (!shouldReusePage) {
-      try {
-        await page.close();
-      } catch (closeError) {
-        console.log(`Warning: Could not close page for ${scripname}`);
-      }
-    }
+    await safeClosePage(page, shouldReusePage);
 
     return {
       isBreakout: null,

@@ -17,6 +17,9 @@ const {
   PUBLISHED_DATA_DIR,
 } = require("./publishScrapeResults.js");
 
+// Fix ISSUE 1: Prevent MaxListenersExceededWarning from Puppeteer process listeners
+process.setMaxListeners(50);
+
 // Initialize Express app
 const app = express();
 app.use(cors());
@@ -64,12 +67,12 @@ const getButtonSelector = (timeframe) => {
 
 // All timeframes and indicators for parallel scraping (excluding 5mi)
 const ALL_TIMEFRAMES = ["15m", "30m", "2h", "1d", "1w", "1m"];
-const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo"];
+const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo", "Order-Block"];
 
 const DEFAULT_BROWSER_COUNT = 1;
 const MAX_BROWSER_COUNT = 20;
-const BROWSER_RETRY_DELAY_MS = 2000;
-const BROWSER_CLOSE_TIMEOUT_MS = 60000;
+const BROWSER_RETRY_DELAY_MS = 5000;
+const BROWSER_CLOSE_TIMEOUT_MS = 30000;
 
 // Render a simple ASCII progress bar
 const generateProgressBar = (completed, total, width = 25) => {
@@ -121,33 +124,60 @@ const buildNeutralStockResult = (stock) => ({
   rs_strength: 0,
 });
 
-const closeTargetWithTimeout = async (label, closeFn) => {
+const closeTargetWithTimeout = async (label, target, closeFn) => {
   try {
     await Promise.race([
       closeFn(),
       new Promise((_, reject) => {
         setTimeout(
-          () => reject(new Error(`${label} close timeout after 60s`)),
+          () =>
+            reject(
+              new Error(
+                `${label} close timeout after ${BROWSER_CLOSE_TIMEOUT_MS / 1000}s`,
+              ),
+            ),
           BROWSER_CLOSE_TIMEOUT_MS,
         );
       }),
     ]);
   } catch (error) {
     console.log(`⚠️  ${error.message}. Continuing shutdown flow.`);
+    // Force-kill the underlying browser process to prevent zombie processes
+    if (target && target.process && typeof target.process === "function") {
+      try {
+        const childProcess = target.process();
+        if (childProcess && childProcess.pid && !childProcess.killed) {
+          console.log(
+            `🔪 Force-killing ${label} process PID ${childProcess.pid}`,
+          );
+          try {
+            process.kill(childProcess.pid, "SIGKILL");
+          } catch (_) {
+            // Process may already be dead
+          }
+        }
+      } catch (_) {
+        // process() may throw if browser is already disconnected
+      }
+    }
   }
 };
 
 const cleanupBrowserSession = async (browser, page) => {
-  if (page) {
-    await closeTargetWithTimeout("Page", async () => {
+  if (page && !page.isClosed()) {
+    await closeTargetWithTimeout("Page", null, async () => {
       await page.close().catch(() => {});
     });
   }
   if (browser) {
-    await closeTargetWithTimeout("Browser", async () => {
-      await browser.close().catch(() => {});
-    });
+    // Remove from active list BEFORE attempting close to avoid double-close
     activeBrowsers = activeBrowsers.filter((b) => b !== browser);
+    await closeTargetWithTimeout("Browser", browser, async () => {
+      // Only attempt graceful close if still connected
+      if (browser.isConnected && browser.isConnected()) {
+        await browser.close().catch(() => {});
+      }
+    });
   }
 };
 
@@ -164,7 +194,7 @@ const launchBrowser = async (headless) => {
   const headlessMode = resolvedHeadless === true ? "new" : resolvedHeadless;
 
   return puppeteer.launch({
-    headless: true,
+    headless: false,
     ...(executablePath ? { executablePath } : {}),
     args: [
       "--no-sandbox",
@@ -183,7 +213,6 @@ const launchBrowser = async (headless) => {
       "--no-first-run",
       "--no-default-browser-check",
       "--metrics-recording-only",
-      // ✅ ADD THESE — they make a massive difference:
       "--disable-translate",
       "--disable-notifications",
       "--disable-infobars",
@@ -194,12 +223,11 @@ const launchBrowser = async (headless) => {
       "--disable-component-update",
       "--disable-domain-reliability",
       "--disable-features=AudioServiceOutOfProcess",
-      "--no-zygote", // Faster process startup
-      "--single-process", // Useful on low-RAM servers (use carefully)
+      "--no-zygote", // Reduces process overhead (safe without --single-process)
       "--memory-pressure-off",
-      "--window-size=1280,720", // Smaller window = less rendering overhead
+      "--window-size=1280,720",
     ],
-    timeout: 15000,
+    timeout: 60000,
   });
 };
 
@@ -231,21 +259,38 @@ const fetchBseStocksDirectly = async () => {
 // the correct timeframe button before saving — this rewrites the shared TV layout
 // so every subsequent stock page in that browser already uses the right timeframe.
 const configureBrowserTimeframe = async (browser, customConfig) => {
+  if (!browser || !browser.isConnected || !browser.isConnected()) {
+    throw new Error("Browser is not connected when configuring timeframe");
+  }
   const page = await browser.newPage();
   if (fs.existsSync(COOKIES_PATH)) {
-    const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
-    await page.setCookie(...cookies);
+    try {
+      const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH));
+      if (cookies && cookies.length > 0) {
+        await page.setCookie(...cookies);
+      }
+    } catch (cookieErr) {
+      console.log(`⚠️  Failed to load cookies: ${cookieErr.message}`);
+    }
   }
-  await page.goto(config.baseUrl);
+
+  // Navigate with explicit timeout and wait strategy
+  await page.goto(config.baseUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+
   const buttonSelector = getButtonSelector(customConfig.timeframe);
-  await page.waitForSelector(buttonSelector, { timeout: 10000 });
+  await page.waitForSelector(buttonSelector, { timeout: 30000 });
   await page.click(buttonSelector);
-  await page.waitForSelector(config.saveButtonSelector, { timeout: 10000 });
+  await page.waitForSelector(config.saveButtonSelector, { timeout: 30000 });
   await page.click(config.saveButtonSelector);
-  // ✅ Wait for a network idle or a confirmation element after saving
+
+  // Wait for a network idle or a confirmation element after saving
   await page
-    .waitForNavigation({ waitUntil: "networkidle2", timeout: 10000 })
+    .waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 })
     .catch(() => {}); // silently ignore if no navigation occurs
+
   return page;
 };
 
@@ -339,8 +384,10 @@ const closeAllActiveBrowsers = async (reason) => {
   try {
     await Promise.all(
       browsersToClose.map((browser, index) =>
-        closeTargetWithTimeout(`Browser ${index + 1}`, async () => {
-          await browser.close().catch(() => {});
+        closeTargetWithTimeout(`Browser ${index + 1}`, browser, async () => {
+          if (browser.isConnected && browser.isConnected()) {
+            await browser.close().catch(() => {});
+          }
         }),
       ),
     );
@@ -372,6 +419,19 @@ const runBrowserWorker = async (
   while (currentIndex < stockSubset.length) {
     try {
       launchAttempt += 1;
+
+      // Stagger browser launches to avoid overwhelming the system
+      // Browser 0 starts immediately, Browser 1 after 3s, Browser 2 after 6s, etc.
+      if (launchAttempt === 1) {
+        const staggerDelay = browserIdx * 3000;
+        if (staggerDelay > 0) {
+          console.log(
+            `⏳ Browser ${browserIdx + 1}: Staggering startup by ${staggerDelay}ms to reduce system load...`,
+          );
+          await delay(staggerDelay);
+        }
+      }
+
       browser = await launchBrowser(customConfig.headless);
       activeBrowsers.push(browser);
 
@@ -467,6 +527,16 @@ const runBrowserWorker = async (
 
         results.push(stockResult);
         currentIndex += 1;
+
+        // After processing each stock, verify browser/page health before continuing
+        if (browser && (!browser.isConnected() || (page && page.isClosed()))) {
+          console.log(
+            `⚠️  Browser ${browserIdx + 1}: Session became unhealthy after ${scripname}, restarting...`,
+          );
+          throw new Error(
+            "Browser session became unavailable after stock processing",
+          );
+        }
         if (workerState) {
           workerState.currentIndex = currentIndex;
         }
@@ -493,8 +563,10 @@ const runBrowserWorker = async (
     } catch (error) {
       const attemptLabel =
         launchAttempt > 1 ? ` (attempt ${launchAttempt})` : "";
+      const errorDetails =
+        error?.message || error?.toString?.() || "Unknown error";
       console.error(
-        `❌ Browser ${browserIdx + 1} crashed${attemptLabel}: ${error.message}`,
+        `❌ Browser ${browserIdx + 1} crashed${attemptLabel}: ${errorDetails}`,
       );
 
       await cleanupBrowserSession(browser, page);
@@ -547,7 +619,9 @@ const resolveRequestedDate = (dateSelection, customDate, fromDate, toDate) => {
 
   if (dateSelection === "range") {
     if (!isValidYmdDate(fromDate) || !isValidYmdDate(toDate)) {
-      throw new Error("A valid fromDate and toDate are required in YYYY-MM-DD format.");
+      throw new Error(
+        "A valid fromDate and toDate are required in YYYY-MM-DD format.",
+      );
     }
     const fromDateObj = new Date(`${fromDate}T00:00:00`);
     const toDateObj = new Date(`${toDate}T00:00:00`);
@@ -1038,7 +1112,12 @@ app.post("/api/run-scraper", async (req, res) => {
       liveMode,
     } = req.body;
 
-    const resolvedDate = resolveRequestedDate(dateSelection, customDate, fromDate, toDate);
+    const resolvedDate = resolveRequestedDate(
+      dateSelection,
+      customDate,
+      fromDate,
+      toDate,
+    );
     const resolvedBrowserCount = resolveBrowserCount(browserCount ?? batchSize);
 
     // Handle "all" mode - run all indicators and all timeframes
@@ -1132,9 +1211,18 @@ app.post("/api/stop-scraper", async (req, res) => {
       `🛑 Stop request received. Closing ${activeBrowsers.length} active browser(s)...`,
     );
 
-    // Close all active browsers in parallel
-    await Promise.all(activeBrowsers.map((b) => b.close().catch(() => {})));
+    // Close all active browsers in parallel with force-kill fallback
+    const browsersToStop = [...activeBrowsers];
     activeBrowsers = [];
+    await Promise.all(
+      browsersToStop.map((browser) =>
+        closeTargetWithTimeout("Stop-browser", browser, async () => {
+          if (browser.isConnected && browser.isConnected()) {
+            await browser.close().catch(() => {});
+          }
+        }),
+      ),
+    );
     console.log("✅ All browsers closed successfully");
 
     // Reset processing flag
@@ -1156,7 +1244,7 @@ app.post("/api/stop-scraper", async (req, res) => {
 });
 
 // --- SERVER START ---
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`✅ Server is running on http://localhost:${PORT}`);
   console.log("   Open the URL in your browser to access the control panel.");

@@ -14,11 +14,11 @@ const config = {
   twoHourButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(4)",
   dailyButtonSelector:
-    "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(5)",
-  weeklyButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(6)",
-  monthlyButtonSelector:
+  weeklyButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(7)",
+  monthlyButtonSelector:
+    "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(8)",
   saveButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(14) > div > div > button",
   symbolSearchButtonSelector:
@@ -31,7 +31,7 @@ const config = {
     "https://api.bseindia.com/BseIndiaAPI/api/MktRGainerLoserDataeqto/w?GLtype=gainer&IndxGrp=AllMkt&IndxGrpval=AllMkt&orderby=all",
   bseUrl:
     "https://www.bseindia.com/markets/equity/EQReports/mktwatchR.html?filter=gainer*all$all$",
-  indicatorNames: ["TrendLines", "Volumetric-Ulgo"],
+  indicatorNames: ["TrendLines", "Volumetric-Ulgo", "Order-Block"],
   indicators: {
     TrendLines: {
       selector:
@@ -44,6 +44,12 @@ const config = {
         "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(29) > div:nth-of-type(2) > span",
       timeStampSelector:
         "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(28) > div:nth-of-type(2) > span",
+    },
+    "Order-Block": {
+      selector:
+        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(31) > div:nth-of-type(2) > span",
+      timeStampSelector:
+        "body > div:nth-of-type(2) > div > div:nth-of-type(6) > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(3) > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div:nth-of-type(5) > div:nth-of-type(2) > div:nth-of-type(32) > div:nth-of-type(2) > span",
     },
   },
 };
