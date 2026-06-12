@@ -1,7 +1,7 @@
 // config.js
 const config = {
   baseUrl: "https://in.tradingview.com/chart/yenE16ib/?symbol=NSE%3Adcm",
-  timeframes: ["5mi", "15m", "30m", "2h", "1d", "1w", "1m"],
+  timeframes: ["5mi", "15m", "30m", "1h", "2h", "4h", "1d", "1w", "1m"],
   canvasSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(5) > div:first-of-type > div:first-of-type > div > div:nth-of-type(2) > div:first-of-type > div:nth-of-type(2) > div > canvas:nth-of-type(2)",
   fiveMinuteButtonSelector:
@@ -11,14 +11,18 @@ const config = {
 
   thirtyMinuteButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(3)",
-  twoHourButtonSelector:
+  oneHourButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(4)",
-  dailyButtonSelector:
+  twoHourButtonSelector:
+    "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(5)",
+  fourHourButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(6)",
-  weeklyButtonSelector:
+  dailyButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(7)",
-  monthlyButtonSelector:
+  weeklyButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(8)",
+  monthlyButtonSelector:
+    "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(4) > div > div > button:nth-of-type(9)",
   saveButtonSelector:
     "body > div:nth-of-type(2) > div > div:nth-of-type(3) > div > div > div:nth-of-type(3) > div:first-of-type > div > div > div > div > div:nth-of-type(14) > div > div > button",
   symbolSearchButtonSelector:

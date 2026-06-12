@@ -57,7 +57,9 @@ const getButtonSelector = (timeframe) => {
     "5mi": config.fiveMinuteButtonSelector,
     "15m": config.fifteenMinuteButtonSelector,
     "30m": config.thirtyMinuteButtonSelector,
+    "1h": config.oneHourButtonSelector,
     "2h": config.twoHourButtonSelector,
+    "4h": config.fourHourButtonSelector,
     "1d": config.dailyButtonSelector,
     "1w": config.weeklyButtonSelector,
     "1m": config.monthlyButtonSelector,
@@ -66,7 +68,7 @@ const getButtonSelector = (timeframe) => {
 };
 
 // All timeframes and indicators for parallel scraping (excluding 5mi)
-const ALL_TIMEFRAMES = ["15m", "30m", "2h", "1d", "1w", "1m"];
+const ALL_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d", "1w", "1m"];
 const ALL_INDICATORS = ["TrendLines", "Volumetric-Ulgo", "Order-Block"];
 
 const DEFAULT_BROWSER_COUNT = 1;
